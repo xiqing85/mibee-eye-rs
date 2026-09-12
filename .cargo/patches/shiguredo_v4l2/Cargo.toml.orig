@@ -1,0 +1,22 @@
+[package]
+name = "shiguredo_v4l2"
+version = "2026.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Rust binding for V4L2"
+readme = "README.md"
+homepage = "https://github.com/shiguredo/v4l2-rs"
+repository = "https://github.com/shiguredo/v4l2-rs"
+license = "Apache-2.0"
+include = ["/src/**/*", "LICENSE", "README.md"]
+
+[workspace]
+members = [
+  "examples/v4l2_m2m_check",
+  "examples/v4l2_m2m_encode",
+  "examples/v4l2_m2m_libcamera_encode",
+  "pbt",
+]
+
+[dependencies]
+libc = "0.2"

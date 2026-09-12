@@ -1,0 +1,74 @@
+[package]
+name = "mibee-eye-raspi-rs"
+version = "0.1.0"
+edition = "2021"
+description = "ONVIF camera service for Raspberry Pi — Rust rewrite of mibee-eye-raspi"
+license = "CC-BY-NC-4.0"
+repository = "https://github.com/xiqing85/mibee-eye-raspi-rs"
+categories = ["multimedia", "command-line-utilities"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+log = "0.4"
+toml = "0.8"
+async-trait = "0.1"
+libc = "0.2"
+tokio = { version = "1", features = ["sync", "rt", "macros", "net", "signal", "time", "fs", "io-util"] }
+axum = { version = "0.7", features = ["ws", "multipart"] }
+rust-embed = "8"
+tower = "0.5"
+serde_json = { version = "1", features = ["preserve_order"] }
+shiguredo_v4l2 = { version = "2026.1.0-canary.4", optional = true }
+# RTSP / auth dependencies
+md-5 = "0.10"
+hex = "0.4"
+rand = "0.8"
+argon2 = "0.5"
+# Metrics / Prometheus
+metrics = "0.23"
+metrics-exporter-prometheus = { version = "0.15", default-features = false, features = ["http-listener"] }
+# Web snapshot/streaming (YUV→JPEG)
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+async-stream = "0.3"
+# Video watermark (SPEC §5.2): pure-Rust font rasterizer + local-time clock.
+# Both are dependency-free of C — safe for the musl static cross-build.
+fontdue = "0.9"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# stdout logging for the protocol libraries (they use the `log` facade)
+env_logger = "0.11"
+# GB/T 28181 device stack (extracted library)
+gb28181-rs = "0.11.0"
+# ONVIF Device stack (extracted library)
+onvif-device-rs = "0.6.0"
+anyhow = "1"
+# AI inference (ONNX Runtime) — optional, behind `ai` feature
+# load-dynamic: no C++ linking at compile time; libonnxruntime.so loaded at runtime via ORT_DYLIB_PATH
+ort = { version = "2.0.0-rc.13", optional = true, default-features = false, features = ["load-dynamic"] }
+core_affinity = { version = "0.8", optional = true }
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+
+[features]
+default = ["v4l2-encoder"]
+ai = ["dep:ort", "dep:core_affinity"]
+multi-camera = []
+# GB 35114 A-level security (SM2 cert REGISTER auth + keyed-SM3 Note
+# integrity). Compile-time opt-in like the Go twin's -tags gb35114.
+gb35114 = ["gb28181-rs/gb35114"]
+webrtc = []
+h265 = []
+v4l2-encoder = ["shiguredo_v4l2"]
+storage-webdav = []
+storage-s3 = []
+storage-smb = []
+
+[patch.crates-io]
+shiguredo_v4l2 = { version = "2026.1.0", path = ".cargo/patches/shiguredo_v4l2" }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
+tokio-tungstenite = "0.23"
+futures-util = "0.3"

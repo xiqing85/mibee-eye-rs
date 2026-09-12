@@ -1,0 +1,12 @@
+# Cross-compilation configuration.
+#
+# Primary method: cargo-zigbuild (uses Zig's cross-compiler).
+#   cargo zigbuild --release --target aarch64-unknown-linux-gnu
+#
+# Alternative: aarch64-linux-gnu-gcc
+# [target.aarch64-unknown-linux-gnu]
+# linker = "aarch64-linux-gnu-gcc"
+
+# Legacy: musl target (fully static, no sysroot needed).
+# [target.aarch64-unknown-linux-musl]
+# linker = ".cargo/aarch64-linker.sh"

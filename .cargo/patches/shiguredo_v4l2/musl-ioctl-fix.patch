@@ -1,0 +1,52 @@
+diff --git a/src/sys.rs b/src/sys.rs
+index 1111111..2222222 100644
+--- a/src/sys.rs
++++ b/src/sys.rs
+@@ -41,17 +41,17 @@ const fn _ioc(dir: u32, ty: u32, nr: u32, size: u32) -> u64 {
+     ((dir << _IOC_DIRSHIFT)
+         | (ty << _IOC_TYPESHIFT)
+         | (nr << _IOC_NRSHIFT)
+         | (size << _IOC_SIZESHIFT)) as u64
+ }
+ 
+ const fn _iowr(ty: u32, nr: u32, size: u32) -> u64 {
+     _ioc(_IOC_READ | _IOC_WRITE, ty, nr, size)
+ }
+ 
+ const fn _iow(ty: u32, nr: u32, size: u32) -> u64 {
+     _ioc(_IOC_WRITE, ty, nr, size)
+ }
+ 
+ const fn _ior(ty: u32, nr: u32, size: u32) -> u64 {
+     _ioc(_IOC_READ, ty, nr, size)
+ }
+ 
+ const V4L2_TYPE: u32 = b'V' as u32;
+ 
+-pub(crate) const VIDIOC_S_FMT: u64 = _iowr(V4L2_TYPE, 5, V4L2_FORMAT_SIZE);
+-pub(crate) const VIDIOC_G_FMT: u64 = _iowr(V4L2_TYPE, 4, V4L2_FORMAT_SIZE);
+-pub(crate) const VIDIOC_REQBUFS: u64 = _iowr(V4L2_TYPE, 8, V4L2_REQUESTBUFFERS_SIZE);
+-pub(crate) const VIDIOC_QUERYBUF: u64 = _iowr(V4L2_TYPE, 9, V4L2_BUFFER_SIZE);
+-pub(crate) const VIDIOC_QBUF: u64 = _iowr(V4L2_TYPE, 15, V4L2_BUFFER_SIZE);
+-pub(crate) const VIDIOC_DQBUF: u64 = _iowr(V4L2_TYPE, 17, V4L2_BUFFER_SIZE);
+-pub(crate) const VIDIOC_STREAMON: u64 = _iow(V4L2_TYPE, 18, 4);
+-pub(crate) const VIDIOC_STREAMOFF: u64 = _iow(V4L2_TYPE, 19, 4);
+-pub(crate) const VIDIOC_S_CTRL: u64 = _iowr(V4L2_TYPE, 28, V4L2_CONTROL_SIZE);
+-pub(crate) const VIDIOC_EXPBUF: u64 = _iowr(V4L2_TYPE, 16, V4L2_EXPORTBUFFER_SIZE);
+-pub(crate) const VIDIOC_SUBSCRIBE_EVENT: u64 = _iow(V4L2_TYPE, 90, V4L2_EVENT_SUBSCRIPTION_SIZE);
+-pub(crate) const VIDIOC_DQEVENT: u64 = _ior(V4L2_TYPE, 89, V4L2_EVENT_SIZE);
++// IOCTL request codes are 32-bit values. Use u32 for compatibility with both glibc (unsigned long)
++// and musl (int) ioctl signatures. On glibc: unsigned long = u64 on aarch64. On musl: int = i32.
++// Both accept u32 values without truncation since the ioctl constants are within 32-bit range.
++pub(crate) const VIDIOC_S_FMT: u32 = _iowr(V4L2_TYPE, 5, V4L2_FORMAT_SIZE) as u32;
++pub(crate) const VIDIOC_G_FMT: u32 = _iowr(V4L2_TYPE, 4, V4L2_FORMAT_SIZE) as u32;
++pub(crate) const VIDIOC_REQBUFS: u32 = _iowr(V4L2_TYPE, 8, V4L2_REQUESTBUFFERS_SIZE) as u32;
++pub(crate) const VIDIOC_QUERYBUF: u32 = _iowr(V4L2_TYPE, 9, V4L2_BUFFER_SIZE) as u32;
++pub(crate) const VIDIOC_QBUF: u32 = _iowr(V4L2_TYPE, 15, V4L2_BUFFER_SIZE) as u32;
++pub(crate) const VIDIOC_DQBUF: u32 = _iowr(V4L2_TYPE, 17, V4L2_BUFFER_SIZE) as u32;
++pub(crate) const VIDIOC_STREAMON: u32 = _iow(V4L2_TYPE, 18, 4) as u32;
++pub(crate) const VIDIOC_STREAMOFF: u32 = _iow(V4L2_TYPE, 19, 4) as u32;
++pub(crate) const VIDIOC_S_CTRL: u32 = _iowr(V4L2_TYPE, 28, V4L2_CONTROL_SIZE) as u32;
++pub(crate) const VIDIOC_EXPBUF: u32 = _iowr(V4L2_TYPE, 16, V4L2_EXPORTBUFFER_SIZE) as u32;
++pub(crate) const VIDIOC_SUBSCRIBE_EVENT: u32 = _iow(V4L2_TYPE, 90, V4L2_EVENT_SUBSCRIPTION_SIZE) as u32;
++pub(crate) const VIDIOC_DQEVENT: u32 = _ior(V4L2_TYPE, 89, V4L2_EVENT_SIZE) as u32;

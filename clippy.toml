@@ -1,0 +1,2 @@
+# Disallow all wildcard imports
+warn-on-all-wildcard-imports = true

@@ -1,0 +1,55 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: aarch64-unknown-linux-gnu
+
+      - name: Install cargo-zigbuild + zig
+        run: |
+          pip3 install --user ziglang
+          cargo install --locked cargo-zigbuild
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Build (aarch64 gnu, v4l2-encoder + ai)
+        run: cargo zigbuild --release --features v4l2-encoder,ai --target aarch64-unknown-linux-gnu
+
+      - name: Package
+        run: |
+          DIR="mibee-eye-raspi-rs-${GITHUB_REF_NAME}.linux-arm64"
+          mkdir -p "${DIR}/deploy"
+          cp target/aarch64-unknown-linux-gnu/release/mibee-eye-raspi-rs "${DIR}/"
+          cp config.example.toml "${DIR}/"
+          cp deploy/mibee-eye-raspi-rs.service "${DIR}/deploy/"
+          cp LICENSE NOTICE "${DIR}/"
+          tar czf "${DIR}.tar.gz" "${DIR}"
+          sha256sum "${DIR}.tar.gz" > checksums.txt
+          echo "DIR=${DIR}" >> "$GITHUB_ENV"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "${DIR}.tar.gz" \
+            checksums.txt \
+            --title "MiBee Eye (Rust) ${GITHUB_REF_NAME}" \
+            --notes "MiBee Eye (蜂眼) Rust first release / 首个正式版本。Full notes below. 完整发布说明见下文。"

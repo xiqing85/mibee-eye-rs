@@ -1,0 +1,364 @@
+# ============================================================================
+# MiBee Eye — example configuration
+# ============================================================================
+# Copy this file to config.toml and adjust for your setup.
+# All fields have built-in defaults — only override what you need.
+# Environment variables with the MIBEE_EYE_ prefix override file values.
+#   e.g. MIBEE_EYE_RTSP_PORT=9999 overrides [rtsp].port
+# ============================================================================
+
+# --------------------------------------------------------------------------
+# Camera capture settings
+# --------------------------------------------------------------------------
+[camera]
+
+# Camera device path (V4L2 or libcamera)
+# type: string  |  default: "/dev/video0"  |  env: MIBEE_EYE_CAMERA_DEVICE
+device = "/dev/video0"
+
+# Capture mode: "mtxrpicam" (default) or "rtsp"
+# type: string  |  default: "mtxrpicam"  |  env: MIBEE_EYE_CAMERA_MODE
+mode = "mtxrpicam"
+
+# External RTSP URL when mode = "rtsp"
+# type: string  |  default: ""  |  env: MIBEE_EYE_CAMERA_RTSP_URL
+# rtsp_url = "rtsp://192.168.1.100:554/stream"
+
+# Capture width in pixels
+# type: integer  |  default: 1280  |  env: MIBEE_EYE_CAMERA_WIDTH
+# Supported: 640, 1296, 1920, 2592
+width = 1280
+
+# Capture height in pixels
+# type: integer  |  default: 720  |  env: MIBEE_EYE_CAMERA_HEIGHT
+height = 720
+
+# Frames per second (max 30 for OV5647)
+# type: integer  |  default: 15  |  env: MIBEE_EYE_CAMERA_FPS
+fps = 15
+
+# Video codec: "h264" or "h265"
+# type: string  |  default: "h264"  |  env: MIBEE_EYE_CAMERA_CODEC
+codec = "h264"
+
+# Target bitrate in bits per second (2 Mbps)
+# type: integer  |  default: 2000000  |  env: MIBEE_EYE_CAMERA_BITRATE
+bitrate = 2000000
+
+# Image controls (OV5647 hardware ranges):
+
+# Brightness: -1.0 to 1.0 (0.0 = default)
+# type: float  |  default: 0.0  |  env: MIBEE_EYE_CAMERA_BRIGHTNESS
+brightness = 0.0
+
+# Contrast: 0.0 to 32.0 (1.0 = default)
+# type: float  |  default: 1.0  |  env: MIBEE_EYE_CAMERA_CONTRAST
+contrast = 1.0
+
+# Saturation: 0.0 to 32.0 (1.0 = default)
+# type: float  |  default: 1.0  |  env: MIBEE_EYE_CAMERA_SATURATION
+saturation = 1.0
+
+# Sharpness: 0.0 to 16.0 (1.0 = default)
+# type: float  |  default: 1.0  |  env: MIBEE_EYE_CAMERA_SHARPNESS
+sharpness = 1.0
+
+# --------------------------------------------------------------------------
+# RTSP server settings
+# --------------------------------------------------------------------------
+[rtsp]
+
+# RTSP port (MediaMTX default: 8554)
+# type: integer  |  default: 8554  |  env: MIBEE_EYE_RTSP_PORT
+port = 8554
+
+# Optional RTSP authentication (leave empty for no auth)
+# type: string  |  default: ""  |  env: MIBEE_EYE_RTSP_USERNAME
+username = ""
+
+# type: string  |  default: ""  |  env: MIBEE_EYE_RTSP_PASSWORD
+password = ""
+
+# --------------------------------------------------------------------------
+# ONVIF server settings
+# --------------------------------------------------------------------------
+[onvif]
+
+# ONVIF HTTP port for SOAP / WS-Discovery
+# type: integer  |  default: 8080  |  env: MIBEE_EYE_ONVIF_PORT
+port = 8080
+
+# WS-UsernameToken credentials used by MiBee NVR
+# type: string  |  default: "admin"  |  env: MIBEE_EYE_ONVIF_USERNAME
+username = "admin"
+
+# REQUIRED: set your ONVIF password
+# type: string  |  default: ""  |  env: MIBEE_EYE_ONVIF_PASSWORD
+password = ""  # <-- set this!
+
+# --------------------------------------------------------------------------
+# GB28181 SIP server settings
+# --------------------------------------------------------------------------
+[gb28181]
+
+# Enable GB28181 SIP registration
+# type: boolean  |  default: false  |  env: MIBEE_EYE_GB28181_ENABLED
+enabled = false
+
+# GB28181 platform SIP server address
+# type: string  |  default: "192.168.1.1"  |  env: MIBEE_EYE_GB28181_PLATFORM_SIP_ADDRESS
+platform_sip_address = "192.168.1.1"
+
+# GB28181 platform SIP server port
+# type: integer  |  default: 5060  |  env: MIBEE_EYE_GB28181_PLATFORM_SIP_PORT
+platform_sip_port = 5060
+
+# GB28181 device ID (20-digit GB28181 standard ID)
+# type: string  |  default: "34020000001320000001"  |  env: MIBEE_EYE_GB28181_DEVICE_ID
+device_id = "34020000001320000001"
+
+# GB28181 channel ID (20-digit GB28181 standard ID)
+# type: string  |  default: "34020000001320000001"  |  env: MIBEE_EYE_GB28181_CHANNEL_ID
+channel_id = "34020000001320000001"
+
+# GB28181 SIP domain (10-digit GB28181 standard domain)
+# type: string  |  default: "3402000000"  |  env: MIBEE_EYE_GB28181_SIP_DOMAIN
+sip_domain = "3402000000"
+
+# GB28181 SIP authentication password
+# type: string  |  default: "12345678"  |  env: MIBEE_EYE_GB28181_PASSWORD
+password = "12345678"
+
+# Local SIP port for receiving SIP messages
+# type: integer  |  default: 5060  |  env: MIBEE_EYE_GB28181_LOCAL_SIP_PORT
+local_sip_port = 5060
+
+# SIP registration interval (seconds)
+# type: integer  |  default: 60  |  env: MIBEE_EYE_GB28181_REGISTER_INTERVAL_SECS
+register_interval_secs = 60
+
+# Heartbeat interval (seconds)
+# type: integer  |  default: 60  |  env: MIBEE_EYE_GB28181_HEARTBEAT_INTERVAL_SECS
+heartbeat_interval_secs = 60
+
+# Heartbeat timeout count (number of missed heartbeats before disconnect)
+# type: integer  |  default: 3  |  env: MIBEE_EYE_GB28181_HEARTBEAT_TIMEOUT_COUNT
+heartbeat_timeout_count = 3
+
+# SIP transport protocol: "udp" (default) or "tcp"
+# type: string  |  default: "udp"  |  env: MIBEE_EYE_GB28181_TRANSPORT
+# transport = "udp"
+
+
+# --------------------------------------------------------------------------
+# ONVIF device information (exposed via GetDeviceInformation)
+# --------------------------------------------------------------------------
+[device]
+
+# Friendly camera name
+# type: string  |  default: "Pi Camera V1"  |  env: MIBEE_EYE_DEVICE_NAME
+name = "Pi Camera V1"
+
+# Device manufacturer
+# type: string  |  default: "Raspberry Pi"  |  env: MIBEE_EYE_DEVICE_MANUFACTURER
+manufacturer = "Raspberry Pi"
+
+# Camera sensor model
+# type: string  |  default: "OV5647"  |  env: MIBEE_EYE_DEVICE_MODEL
+model = "OV5647"
+
+# Firmware version string
+# type: string  |  default: "1.0.0"  |  env: MIBEE_EYE_DEVICE_FIRMWARE
+firmware = "1.0.0"
+
+# Hardware identifier
+# type: string  |  default: "OV5647"  |  env: MIBEE_EYE_DEVICE_HARDWAREID
+hardware_id = "OV5647"
+
+# Device serial number (empty = auto-generated at runtime)
+# type: string  |  default: ""  |  env: MIBEE_EYE_DEVICE_SERIALNUMBER
+serial_number = ""
+
+# --------------------------------------------------------------------------
+# Logging settings
+# --------------------------------------------------------------------------
+[logging]
+
+# Log level: "debug", "info", "warn", "error"
+# type: string  |  default: "info"  |  env: MIBEE_EYE_LOGGING_LEVEL
+level = "info"
+
+# --------------------------------------------------------------------------
+# Web UI settings
+# --------------------------------------------------------------------------
+[web]
+
+# Enable Web UI server (admin panel on port 8088 by default)
+# type: boolean  |  default: true  |  env: MIBEE_EYE_WEB_ENABLED
+enabled = true
+
+# Web UI HTTP port (separate from ONVIF :8080 and RTSP :8554)
+# type: integer  |  default: 8088  |  env: MIBEE_EYE_WEB_PORT
+port = 8088
+
+# HTTP Basic auth credentials. Leave empty to mirror ONVIF credentials
+# (i.e. web.username = onvif.username, web.password = onvif.password).
+# type: string  |  default: ""  |  env: MIBEE_EYE_WEB_USERNAME
+username = ""
+
+# type: string  |  default: ""  |  env: MIBEE_EYE_WEB_PASSWORD
+password = ""
+
+# ============================================================================
+# OPTIONAL SECTIONS — all disabled by default, enabled below for reference
+# ============================================================================
+
+# --------------------------------------------------------------------------
+# Storage (local recording)
+# --------------------------------------------------------------------------
+[storage]
+enabled = false
+
+[storage.local]
+# Directory for recorded video files
+path = ""
+# Delete recordings older than N days
+retention_days = 30
+
+# --------------------------------------------------------------------------
+# GB28181 local recording (continuous, feeds RecordInfo + playback INVITE)
+# Segments are bare H.264 files at <storage_path>/YYYY-MM-DD/HH/MMSS.h264
+# plus an append-only <storage_path>/index.jsonl. Defaults and on-disk format
+# are identical to the Go repo (rpi3b-cam).
+# --------------------------------------------------------------------------
+[recording]
+# Enable continuous local recording
+# type: boolean  |  default: false  |  env: MIBEE_EYE_RECORDING_ENABLED
+enabled = false
+
+# Recording root directory
+# type: string  |  default: "recordings"  |  env: MIBEE_EYE_RECORDING_STORAGE_PATH
+storage_path = "recordings"
+
+# Target segment duration in seconds
+# type: integer  |  default: 600  |  env: MIBEE_EYE_RECORDING_SEGMENT_SECS
+segment_secs = 600
+
+# Delete segments older than N days (0 = infinite)
+# type: integer  |  default: 3  |  env: MIBEE_EYE_RECORDING_RETENTION_DAYS
+retention_days = 3
+
+# Prune oldest segments above this cap in MB (0 = unlimited)
+# type: integer  |  default: 8192  |  env: MIBEE_EYE_RECORDING_MAX_STORAGE_MB
+max_storage_mb = 8192
+
+# --------------------------------------------------------------------------
+# Video watermark (SPEC §5.2) — burned into every video output (live /
+# RTSP / ONVIF / GB28181 / recordings / snapshots), restart to apply.
+# --------------------------------------------------------------------------
+[watermark]
+# Enable the watermark
+# type: boolean  |  default: false  |  env: MIBEE_EYE_WATERMARK_ENABLED
+enabled = false
+
+# Custom text (≤128 chars). Non-ASCII text (e.g. Chinese) needs font_path
+# pointing at a font with those glyphs.
+# type: string  |  default: ""  |  env: MIBEE_EYE_WATERMARK_TEXT
+text = ""
+
+# Burn the real-time clock (device local timezone) next to the text
+# type: boolean  |  default: true  |  env: MIBEE_EYE_WATERMARK_SHOW_TIMESTAMP
+show_timestamp = true
+
+# Timestamp strftime subset: %Y %m %d %H %M %S %F %T %% plus literals
+# type: string  |  default: "%Y-%m-%d %H:%M:%S"  |  env: MIBEE_EYE_WATERMARK_TIMESTAMP_FORMAT
+timestamp_format = "%Y-%m-%d %H:%M:%S"
+
+# Screen position: top-left | top-right | bottom-left | bottom-right
+# type: string  |  default: "top-left"  |  env: MIBEE_EYE_WATERMARK_POSITION
+position = "top-left"
+
+# Font height in pixels (12..96)
+# type: integer  |  default: 24  |  env: MIBEE_EYE_WATERMARK_FONT_SIZE
+font_size = 24
+
+# Optional TTF/OTF path for non-ASCII text (e.g. the repo's
+# assets/fonts/NotoSansSC-Common.otf for Chinese; deploy it to the device,
+# e.g. /usr/local/share/fonts/). Empty = built-in ASCII font. A failed load
+# falls back to the built-in font with a warning.
+# type: string  |  default: ""  |  env: MIBEE_EYE_WATERMARK_FONT_PATH
+font_path = ""
+
+# --------------------------------------------------------------------------
+# Motion detection
+# --------------------------------------------------------------------------
+[motion]
+enabled = false
+# Detection sensitivity (0.0 to 1.0)
+sensitivity = 0.5
+# Minimum contour area (pixels) to trigger motion
+min_area = 100
+# Cooldown between motion events (milliseconds)
+cooldown_ms = 1000
+
+# --------------------------------------------------------------------------
+# RTMP push streaming
+# --------------------------------------------------------------------------
+[rtmp]
+enabled = false
+# RTMP server URL to push stream to
+url = ""
+
+# ─── Reserved Features (未实现, 见 docs/features/) ───
+# All reserved features are disabled by default.
+# See docs/features/*.md for design documentation.
+# Enabling these without hardware support will log a warning and auto-degrade.
+
+# --------------------------------------------------------------------------
+# AI detection (NanoDet-Plus object detection, SPEC v1 §4.6)
+# --------------------------------------------------------------------------
+# Build with `--features ai` (make cross-build includes it). Runtime needs
+# libonnxruntime.so (system path or ORT_DYLIB_PATH) and the model file.
+#[features.ai]
+#enabled = false
+#
+# Registry id of the startup model (SPEC §4.6; GET /api/ai/models lists the
+# choices, POST /api/ai/models/{id}/activate switches at runtime).
+# type: string  |  default: "nanodet-plus-m-320"
+#model = "nanodet-plus-m-320"
+#
+# Allow runtime model uploads via POST /api/ai/models/{id} (capability
+# ai_upload). Model files are untrusted input to the inference engine —
+# keep off unless needed. Uploaded models persist in uploaded.json.
+# type: boolean  |  default: false
+#allow_upload = false
+#
+# Model file path (ONNX format). A non-default value overrides the registry
+# id (custom deployments).
+# type: string  |  default: "/var/lib/mibee-eye/models/nanodet-m.onnx"
+#model_path = "/var/lib/mibee-eye/models/nanodet-m.onnx"
+#
+# Detection confidence threshold (0.0 to 1.0)
+# type: float  |  default: 0.5
+#confidence_threshold = 0.5
+#
+# Run inference every N frames (to save CPU)
+# type: integer  |  default: 5
+#interval_frames = 5
+#
+# Maximum memory budget in MB
+# type: integer  |  default: 256
+#max_memory_mb = 256
+#
+# CPU cores to use for inference (0=any, or list of core IDs)
+# type: array of integers  |  default: [2, 3]
+#cpu_cores = [2, 3]
+
+[features.multi_camera]
+enabled = false  # 未实现 (Not implemented) — see docs/features/multi-camera.md
+
+[features.webrtc]
+enabled = false  # 未实现 (Not implemented) — see docs/features/webrtc.md
+
+[features.h265]
+enabled = false  # 未实现 (Not implemented) — see docs/features/h265.md

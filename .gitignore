@@ -1,0 +1,39 @@
+# Rust
+target/
+Cargo.lock
+
+# Editor
+*.swp
+*~
+
+# OpenCode evidence
+.omo/
+
+# AI model files (downloaded, not committed)
+models/*.onnx
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files (safe to rm -rf)
+tmp/
+
+# Local agent context — never commit (workspace policy)
+AGENTS.md
+
+# Hygiene additions (2026-09-10, enforced by tools/check-repo-hygiene.sh)
+/-*
+.env
+.env.*
+!.env.example
+*.pcap
+*.pcapng
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+*.log
+config.local.*
+cookies.txt
