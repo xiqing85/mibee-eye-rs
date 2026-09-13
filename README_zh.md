@@ -5,15 +5,32 @@
 
 [English](README.md)
 
-树莓派 ONVIF 摄像头服务 —— [mibee-eye-raspi-go](https://github.com/xiqing85/mibee-eye-raspi-go) 的 **Rust 重写版**。
+树莓派 ONVIF 摄像头服务 —— MiBee Eye 的 **Rust 实现**。
+另有一个兄弟 [Go 实现](https://github.com/xiqing85/mibee-eye-raspi-go)，
+部署画像不同，见[我该选哪个实现？](#我该选哪个实现)。
 
-原生 V4L2/libcamera 采集 H.264 视频（零子进程），RTSP/RTMP 双协议推流，
-内置 ONVIF Profile S 与 GB28181 国标设备端接入 NVR，支持连续本地录像与国标回放，
-可选片上 NanoDet 目标检测。
+原生 V4L2/libcamera 采集 H.264 视频（采集与编码全程进程内完成），
+RTSP/RTMP 双协议推流，内置 ONVIF Profile S 与 GB28181 国标设备端接入 NVR，
+支持连续本地录像与国标回放，可选片上 NanoDet 目标检测。
 
-> **为什么用 Rust？** Go 版依赖 `mtxrpicam`（子进程管道）采集、`ffmpeg` 转 HLS。
-> Rust 重写版使用原生 V4L2 与 libcamera 绑定，消除全部子进程依赖，
-> 在资源受限的开发板上部署更精简、更可靠。
+## 我该选哪个实现？
+
+两个实现说同样的协议（ONVIF Profile S、GB28181、RTSP、RTMP）、共享同一套
+SPEC v1 Web UI/API、对接同样的 NVR —— 按部署画像选择：
+
+| 选 **Go 实现**，当你… | 选 **Rust 实现**，当你… |
+|---|---|
+| 想最快跑起来：零 CGO 构建、原生交叉编译 | 板子内存/闪存吃紧（~2 MB 二进制、6–12 MB 内存） |
+| 需要开箱即用的 HLS 浏览器播放 | 需要把 OSD 水印烧录进每一路输出 |
+| 需要 i18n 界面或运行指标 API | 要求采集+编码全程进程内（无采集子进程） |
+| 更想在 Go 代码上动手 | 更想在 Rust 代码上动手 |
+
+两者共有：AI 检测（NanoDet，可选）· GB 35114 A 级（可选）· 连续录像 + GB28181
+回放 · 图像调节 · 快照。
+
+> **设计说明** —— Go 实现通过 `mtxrpicam`/`rpicam-vid` 前端驱动 libcamera
+> （子进程管道），HLS 另用 `ffmpeg`；本 Rust 实现经 V4L2 原生采集与编码，
+> 服务全程零子进程。
 
 ---
 
@@ -114,15 +131,17 @@ sequenceDiagram
     P->>C: SIP INFO（暂停 / 继续 / 拖动 / 变速）
 ```
 
-### 与 Go 版性能对比
+### RPi 3B 参考资源占用（720p@15fps）
 
-| 指标 | Go（v1） | Rust（v2） | 提升 |
-|------|---------|-----------|------|
-| 二进制体积 | ~15 MB | ~2 MB | **缩小 87%** |
-| 内存占用 | 15–25 MB（ffmpeg 另加 15 MB） | 6–12 MB | **降低约 50%** |
-| 子进程依赖 | mtxrpicam + ffmpeg | 无 | **零子进程** |
-| CPU 占用（720p@15fps） | ~15% | ~10% | **降低约 33%** |
-| 交叉编译 | 零 CGO | musl 静态 | **全静态二进制** |
+| 指标 | Go 实现 | Rust 实现 |
+|------|---------|-----------|
+| 二进制体积 | ~15 MB | ~2 MB |
+| 内存占用 | 15–25 MB（ffmpeg 另加 15 MB） | 6–12 MB |
+| 子进程依赖 | mtxrpicam + ffmpeg（HLS） | 无 |
+| CPU 占用 | ~15% | ~10% |
+
+来自我们 RPi 3B 部署的参考值 —— 可用
+[`bench/rpi-bench.sh`](bench/rpi-bench.sh) 在自己的板子上复测。
 
 ---
 
@@ -186,8 +205,7 @@ cp config.example.toml config.toml
 
 | 节 | 键 | 默认值 | 说明 |
 |----|----|--------|------|
-| `[camera]` | `device` | `/dev/video0` | V4L2 设备节点 |
-| `[camera]` | `mode` | `"mtxrpicam"` | 采集模式：`mtxrpicam` 或 `rtsp` |
+| `[camera]` | `device` | `/dev/video0` | V4L2 设备节点 —— 采集恒为原生进程内实现；兼容保留的 `mode` 键（Go 版配置习惯）会被接受但忽略 |
 | `[camera]` | `width` / `height` | 1280×720 | 采集分辨率 |
 | `[camera]` | `fps` | 15 | 帧率 |
 | `[camera]` | `bitrate` | 2000000 | 目标码率（bps） |
@@ -357,5 +375,8 @@ cargo build --release --features "multi-camera,webrtc,h265"
 
 ## 许可证
 
-CC BY-NC 4.0（非商业性使用，禁止商用）—— 详见 [LICENSE](LICENSE)。
+源代码许可为 **CC BY-NC 4.0（非商业性使用，禁止商用）**—— 详见 [LICENSE](LICENSE)。
 MediaMTX 衍生部分与内置 Noto 字体沿用各自许可（见 [NOTICE](NOTICE)）。
+
+**商业授权** —— 用于商业产品或部署需另行获得作者授权；
+请开标题前缀为 `[commercial-license]` 的 issue 联系。

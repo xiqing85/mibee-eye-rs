@@ -5,18 +5,36 @@
 
 [中文文档](README_zh.md)
 
-ONVIF camera service for Raspberry Pi — **Rust rewrite** of
-[mibee-eye-raspi-go](https://github.com/xiqing85/mibee-eye-raspi-go).
+ONVIF camera service for Raspberry Pi — the **Rust implementation** of
+MiBee Eye. A sibling [Go implementation](https://github.com/xiqing85/mibee-eye-raspi-go)
+exists with a different deployment profile — see
+[Which implementation should I use?](#which-implementation-should-i-use).
 
-Captures H.264 video with native V4L2/libcamera (zero subprocesses), streams
-via RTSP/RTMP, speaks ONVIF Profile S and GB28181 for NVR integration, records
-continuously with playback support, and can run on-device NanoDet object
-detection.
+Captures H.264 video with native V4L2/libcamera (capture and encode fully
+in-process), streams via RTSP/RTMP, speaks ONVIF Profile S and GB28181 for NVR
+integration, records continuously with playback support, and can run on-device
+NanoDet object detection.
 
-> **Why Rust?** The Go version relied on `mtxrpicam` (subprocess pipe) for
-> camera capture and `ffmpeg` for HLS transcoding. This Rust rewrite uses
-> native V4L2 and libcamera bindings, eliminating all subprocess dependencies
-> for a leaner, more reliable deployment on resource-constrained SBCs.
+## Which implementation should I use?
+
+Both implementations speak the same protocols (ONVIF Profile S, GB28181,
+RTSP, RTMP), share the same SPEC v1 web UI/API, and interoperate with the same
+NVRs — pick by deployment profile:
+
+| Pick the **Go** implementation when… | Pick the **Rust** implementation when… |
+|---|---|
+| You want the quickest path: zero-CGO build, stock cross-compile | The board is memory/flash constrained (~2 MB binary, 6–12 MB RSS) |
+| You want HLS browser playback out of the box | You want the OSD watermark burned into every output |
+| You need the i18n UI or the runtime metrics API | You want capture + encode fully in-process (no capture subprocess) |
+| You prefer hacking on a Go codebase | You prefer hacking on a Rust codebase |
+
+Both: AI detection (NanoDet, opt-in) · GB 35114 A-level (opt-in) · continuous
+recording with GB28181 playback · imaging controls · snapshot.
+
+> **Design note** — the Go implementation drives libcamera through the
+> `mtxrpicam`/`rpicam-vid` front end (a subprocess pipe) and uses `ffmpeg`
+> only for HLS; this Rust implementation captures and encodes natively via
+> V4L2, so the service runs with no subprocesses at all.
 
 ---
 
@@ -118,15 +136,17 @@ sequenceDiagram
     P->>C: SIP INFO (pause / resume / seek / speed)
 ```
 
-### Performance vs the Go version
+### Indicative footprint on RPi 3B (720p@15fps)
 
-| Metric | Go (v1) | Rust (v2) | Improvement |
-|--------|---------|-----------|-------------|
-| Binary Size | ~15 MB | ~2 MB | **87% smaller** |
-| Memory Usage | 15–25 MB (+15 MB for ffmpeg) | 6–12 MB | **~50% reduction** |
-| Subprocess Dependencies | mtxrpicam + ffmpeg | None | **Zero subprocesses** |
-| CPU Usage (720p@15fps) | ~15% | ~10% | **~33% reduction** |
-| Cross-compile | Zero CGO | musl static | **Fully static binary** |
+| Metric | Go implementation | Rust implementation |
+|--------|-------------------|---------------------|
+| Binary size | ~15 MB | ~2 MB |
+| Memory usage | 15–25 MB (+15 MB for ffmpeg) | 6–12 MB |
+| Subprocess dependencies | mtxrpicam + ffmpeg (HLS) | none |
+| CPU usage | ~15% | ~10% |
+
+Indicative numbers from our RPi 3B deployments — reproduce on your own board
+with [`bench/rpi-bench.sh`](bench/rpi-bench.sh).
 
 ---
 
@@ -191,8 +211,7 @@ Key settings:
 
 | Section | Key | Default | Description |
 |---------|-----|---------|-------------|
-| `[camera]` | `device` | `/dev/video0` | V4L2 camera device |
-| `[camera]` | `mode` | `"mtxrpicam"` | Capture mode: `mtxrpicam` or `rtsp` |
+| `[camera]` | `device` | `/dev/video0` | V4L2 camera device — capture is always native (in-process); the legacy `mode` key from Go-version configs is accepted but ignored |
 | `[camera]` | `width` / `height` | 1280×720 | Capture resolution |
 | `[camera]` | `fps` | 15 | Frames per second |
 | `[camera]` | `bitrate` | 2000000 | Target bitrate (bps) |
@@ -367,6 +386,10 @@ cargo build --release --features "multi-camera,webrtc,h265"
 
 ## License
 
-CC BY-NC 4.0（非商业性使用，禁止商用）— see [LICENSE](LICENSE). MediaMTX-derived
-portions and the bundled Noto font keep their own licenses (see
-[NOTICE](NOTICE)).
+Source code is licensed **CC BY-NC 4.0 (non-commercial)** — see [LICENSE](LICENSE).
+MediaMTX-derived portions and the bundled Noto font keep their own licenses
+(see [NOTICE](NOTICE)).
+
+**Commercial licensing** — use in commercial products or deployments requires
+a separate license from the author. Open an issue titled `[commercial-license]`
+to get in touch.

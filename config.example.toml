@@ -16,7 +16,8 @@
 # type: string  |  default: "/dev/video0"  |  env: MIBEE_EYE_CAMERA_DEVICE
 device = "/dev/video0"
 
-# Capture mode: "mtxrpicam" (default) or "rtsp"
+# Legacy capture-mode key, accepted for Go-version config compatibility and
+# IGNORED: capture is always native in-process V4L2 in this implementation.
 # type: string  |  default: "mtxrpicam"  |  env: MIBEE_EYE_CAMERA_MODE
 mode = "mtxrpicam"
 
