@@ -145,8 +145,8 @@ async fn main() {
     // own clone into the spawned supervision loop.
     let web_observe = observe.clone();
 
-    println!("mibee-eye-raspi-rs v0.1.0");
-    println!("ONVIF camera service for Raspberry Pi");
+    println!("mibee-eye-raspi-rs v{}", env!("CARGO_PKG_VERSION"));
+    println!("ONVIF / GB28181 camera service for Linux boards");
 
     // --- Load configuration ---
     let config_path = resolve_config_path();

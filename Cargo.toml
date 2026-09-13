@@ -1,6 +1,6 @@
 [package]
 name = "mibee-eye-raspi-rs"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Turn any Linux board into an ONVIF / GB28181 IP camera — the Rust implementation of MiBee Eye"
 license = "Apache-2.0"

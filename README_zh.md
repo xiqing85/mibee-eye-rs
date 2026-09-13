@@ -61,11 +61,11 @@ SPEC v1 Web UI/API、对接同样的 NVR —— 按部署画像选择：
 
 ```mermaid
 flowchart LR
-    subgraph device["树莓派 — mibee-eye-raspi-rs"]
-        CAM["CSI 摄像头模组<br/>(OV5647 / IMX219 / IMX708 / IMX477)"]
-        CAP["V4L2 + libcamera 原生采集"]
+    subgraph device["Linux 板 — mibee-eye-raspi-rs"]
+        CAM["V4L2 摄像头<br/>(CSI 模组或 USB/UVC)"]
+        CAP["原生 V4L2 采集<br/>（进程内）"]
         WM["OSD 水印烧录<br/>文字 + 实时时钟"]
-        ENC["V4L2 M2M 硬件<br/>H.264 编码器"]
+        ENC["H.264 编码器 —— V4L2 M2M 硬件<br/>或进程内 openh264（自动）"]
         HUB["编码帧枢纽"]
         RTSP["RTSP 服务 :8554"]
         RTMP["RTMP 推流"]
@@ -152,9 +152,12 @@ sequenceDiagram
 
 ```bash
 git clone https://github.com/xiqing85/mibee-eye-rs.git
-cd mibee-eye-raspi-rs
+cd mibee-eye-rs
 cargo build --release
 ```
+
+Linux 预编译产物（aarch64 gnu/musl、x86_64 musl）见
+[Releases](https://github.com/xiqing85/mibee-eye-rs/releases) 页面。
 
 ### 交叉编译 ARM64（树莓派）
 
@@ -179,7 +182,7 @@ AI 特性同样随 `make cross-build` 构建（`--features ai`），
 产物在运行时动态加载 `libonnxruntime.so`（详见
 [docs/features/ai-detection.md](docs/features/ai-detection.md)）。
 
-### 部署到树莓派
+### 部署到你的板子
 
 ```bash
 # 交叉构建后一键安装
@@ -207,6 +210,8 @@ cp config.example.toml config.toml
 | 节 | 键 | 默认值 | 说明 |
 |----|----|--------|------|
 | `[camera]` | `device` | `/dev/video0` | V4L2 设备节点 —— 采集恒为原生进程内实现；兼容保留的 `mode` 键（Go 版配置习惯）会被接受但忽略 |
+| `[camera]` | `encoder` | `auto` | 编码路径：`auto`（探测 `encoder_device`，失败回退软编）、`hardware`（仅 V4L2 M2M）、`software`（openh264）—— 见[硬件支持](#硬件支持) |
+| `[camera]` | `encoder_device` | `/dev/video11` | `encoder = auto/hardware` 探测的 V4L2 M2M 编码节点（树莓派为 bcm2835-codec-encode；按 SoC 配置） |
 | `[camera]` | `width` / `height` | 1280×720 | 采集分辨率 |
 | `[camera]` | `fps` | 15 | 帧率 |
 | `[camera]` | `bitrate` | 2000000 | 目标码率（bps） |
@@ -288,7 +293,7 @@ http://<相机IP>:8080/onvif/device_service
 
 ## 硬件支持
 
-### 树莓派
+### 板型与编码器
 
 **任意 Linux 板可用。** 采集是通用 V4L2（`/dev/video0`，可配置 —— USB/UVC
 相机随处可用）。编码由 `camera.encoder` 决定路径：
@@ -345,7 +350,7 @@ http://<相机IP>:8080/onvif/device_service
 
 ### 前置要求
 
-- **Rust** 1.83+（`rustup` 安装）
+- **Rust** 1.88+（`rustup` 安装）
 - **V4L2** 开发头文件（本机构建）
   - Debian：`sudo apt install libv4l-dev`
   - Arch：`sudo pacman -S v4l-utils`
@@ -371,9 +376,19 @@ cargo run --release
 
 ### 特性开关
 
+默认特性：`v4l2-encoder` + `software-encoder`（硬件编码 + openh264 自动
+回退 —— 任意板都适用的组合）。
+
 ```bash
-# V4L2 硬件编码器（H.264）—— 默认开启
+# 进程内软件编码器（openh264）—— 默认开启；无 V4L2 M2M 节点的板
+# 依赖它做 auto 回退
+cargo build --release --features "software-encoder"
+
+# V4L2 M2M 硬件编码器（H.264）—— 默认开启
 cargo build --release --features "v4l2-encoder"
+
+# 仅硬编的精简构建（闪存吃紧时用，免去 openh264 的 vendored C 编译）
+cargo build --release --no-default-features --features "v4l2-encoder"
 
 # AI 检测（NanoDet + ONNX Runtime，动态加载）
 cargo build --release --features "ai"
@@ -381,7 +396,11 @@ cargo build --release --features "ai"
 # GB 35114 A 级安全（SM2 证书认证 + keyed-SM3 完整性）
 cargo build --release --features "gb35114"
 
-# 规划中特性（开发用途）
+# 远程录像存储后端（S3 / WebDAV / SMB）—— 保留项：storage-s3 /
+# storage-webdav / storage-smb 三个 feature 开关已预留但尚未接线
+# （缺可选依赖）；录像器目前恒写本地，请勿启用
+
+# 规划中特性 —— 占位 feature（当前无实际作用）
 cargo build --release --features "multi-camera,webrtc,h265"
 ```
 

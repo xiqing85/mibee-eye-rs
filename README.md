@@ -65,11 +65,11 @@ recording with GB28181 playback · imaging controls · snapshot.
 
 ```mermaid
 flowchart LR
-    subgraph device["Raspberry Pi — mibee-eye-raspi-rs"]
-        CAM["CSI camera module<br/>(OV5647 / IMX219 / IMX708 / IMX477)"]
-        CAP["V4L2 + libcamera native capture"]
+    subgraph device["Linux board — mibee-eye-raspi-rs"]
+        CAM["V4L2 camera<br/>(CSI module or USB/UVC)"]
+        CAP["native V4L2 capture<br/>(in-process)"]
         WM["OSD watermark burn-in<br/>text + real-time clock"]
-        ENC["V4L2 M2M hardware<br/>H.264 encoder"]
+        ENC["H.264 encoder — V4L2 M2M hardware<br/>or in-process openh264 (auto)"]
         HUB["encoded frame hub"]
         RTSP["RTSP server :8554"]
         RTMP["RTMP push"]
@@ -157,9 +157,12 @@ with [`bench/rpi-bench.sh`](bench/rpi-bench.sh).
 
 ```bash
 git clone https://github.com/xiqing85/mibee-eye-rs.git
-cd mibee-eye-raspi-rs
+cd mibee-eye-rs
 cargo build --release
 ```
+
+Prebuilt binaries for Linux (aarch64 gnu/musl, x86_64 musl) are available on
+the [Releases](https://github.com/xiqing85/mibee-eye-rs/releases) page.
 
 ### Cross-compile for ARM64 (RPi)
 
@@ -184,7 +187,7 @@ The AI feature builds with `make cross-build` too (`--features ai`); the
 resulting binary loads `libonnxruntime.so` at runtime (see
 [docs/features/ai-detection.md](docs/features/ai-detection.md)).
 
-### Deploy to Raspberry Pi
+### Deploy to your board
 
 ```bash
 # Quick install (after cross-build)
@@ -213,6 +216,8 @@ Key settings:
 | Section | Key | Default | Description |
 |---------|-----|---------|-------------|
 | `[camera]` | `device` | `/dev/video0` | V4L2 camera device — capture is always native (in-process); the legacy `mode` key from Go-version configs is accepted but ignored |
+| `[camera]` | `encoder` | `auto` | Encoder path: `auto` (probe `encoder_device`, fall back to software), `hardware` (V4L2 M2M only), `software` (openh264) — see [Hardware Support](#hardware-support) |
+| `[camera]` | `encoder_device` | `/dev/video11` | V4L2 M2M encoder node probed by `encoder = auto/hardware` (bcm2835-codec-encode on Pi; configure per SoC) |
 | `[camera]` | `width` / `height` | 1280×720 | Capture resolution |
 | `[camera]` | `fps` | 15 | Frames per second |
 | `[camera]` | `bitrate` | 2000000 | Target bitrate (bps) |
@@ -298,7 +303,7 @@ http://<camera-ip>:8080/onvif/device_service
 
 ## Hardware Support
 
-### Raspberry Pi
+### Boards & encoders
 
 **Any Linux board works.** Capture is generic V4L2 (`/dev/video0`,
 configurable — USB/UVC cameras work anywhere). For encoding, `camera.encoder`
@@ -358,7 +363,7 @@ logs a warning and gracefully degrades.
 
 ### Prerequisites
 
-- **Rust** 1.83+ (install via `rustup`)
+- **Rust** 1.88+ (install via `rustup`)
 - **V4L2** development headers (for native builds)
   - Debian: `sudo apt install libv4l-dev`
   - Arch: `sudo pacman -S v4l-utils`
@@ -384,9 +389,19 @@ cargo run --release
 
 ### Feature Flags
 
+Default features: `v4l2-encoder` + `software-encoder` (hardware encode with
+automatic openh264 fallback — the right choice on any board).
+
 ```bash
-# V4L2 hardware encoder (H.264) — enabled by default
+# In-process software encoder (openh264) — default; required for the
+# auto-fallback on boards without a V4L2 M2M encoder node
+cargo build --release --features "software-encoder"
+
+# V4L2 M2M hardware encoder (H.264) — default
 cargo build --release --features "v4l2-encoder"
+
+# Hardware-encoder-only build for constrained flash (no openh264 vendored C)
+cargo build --release --no-default-features --features "v4l2-encoder"
 
 # AI detection (NanoDet + ONNX Runtime, loaded dynamically)
 cargo build --release --features "ai"
@@ -394,7 +409,12 @@ cargo build --release --features "ai"
 # GB 35114 A-level security (SM2 cert auth + keyed-SM3 integrity)
 cargo build --release --features "gb35114"
 
-# Reserved features (for development)
+# Remote segment-storage backends (S3 / WebDAV / SMB) — reserved: the
+# storage-s3 / storage-webdav / storage-smb feature flags exist but are not
+# wired up yet (missing optional deps); the recorder always writes locally
+# today. Do not enable them.
+
+# Reserved features — placeholders for planned capabilities (no-op today)
 cargo build --release --features "multi-camera,webrtc,h265"
 ```
 
