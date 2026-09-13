@@ -45,6 +45,7 @@ anyhow = "1"
 # load-dynamic: no C++ linking at compile time; libonnxruntime.so loaded at runtime via ORT_DYLIB_PATH
 ort = { version = "2.0.0-rc.13", optional = true, default-features = false, features = ["load-dynamic"] }
 core_affinity = { version = "0.8", optional = true }
+openh264 = { version = "0.9.8", optional = true }
 
 [profile.release]
 opt-level = "z"
@@ -52,7 +53,7 @@ lto = true
 strip = true
 
 [features]
-default = ["v4l2-encoder"]
+default = ["v4l2-encoder", "software-encoder"]
 ai = ["dep:ort", "dep:core_affinity"]
 multi-camera = []
 # GB 35114 A-level security (SM2 cert REGISTER auth + keyed-SM3 Note
@@ -61,6 +62,9 @@ gb35114 = ["gb28181-rs/gb35114"]
 webrtc = []
 h265 = []
 v4l2-encoder = ["shiguredo_v4l2"]
+# In-process software H.264 encoder (openh264, BSD-2-Clause). Default-on so
+# boards without a V4L2 M2M encoder node work out of the box (auto fallback).
+software-encoder = ["dep:openh264"]
 storage-webdav = []
 storage-s3 = []
 storage-smb = []

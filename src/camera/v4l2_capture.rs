@@ -15,7 +15,7 @@ use std::ptr;
 use std::sync::Arc;
 
 use crate::camera::source::CameraError;
-use crate::camera::v4l2::FrameProducer;
+use crate::camera::source::FrameProducer;
 
 // ─────────────────────────────────────────────────────────────────────────
 // V4L2 constants

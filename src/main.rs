@@ -2,9 +2,13 @@
 
 #[cfg(feature = "ai")]
 use mibee_eye_raspi_rs::ai::ortv::OrtDetector;
+use mibee_eye_raspi_rs::camera::encoder_probe::{self as enc_probe, EncoderProbe, SelectedEncoder};
+#[cfg(feature = "software-encoder")]
+use mibee_eye_raspi_rs::camera::software::SoftwareCameraSource;
 use mibee_eye_raspi_rs::camera::source::{
     CameraConfig, CameraSource, FrameType, H264Level, H264Profile,
 };
+#[cfg(feature = "v4l2-encoder")]
 use mibee_eye_raspi_rs::camera::v4l2::V4l2CameraSource;
 use mibee_eye_raspi_rs::camera::v4l2_capture::V4l2CaptureProducer;
 use mibee_eye_raspi_rs::config::Config;
@@ -694,19 +698,63 @@ async fn start_camera_pipeline(
     }
     println!("camera: will open {device} {width}x{height}@{fps}fps");
 
-    // Build the V4L2 M2M H.264 encoder configuration.
+    // Resolve hardware vs software encoder (camera.encoder /
+    // camera.encoder_device; see camera::encoder_probe for the matrix).
+    let availability = {
+        #[cfg(feature = "v4l2-encoder")]
+        {
+            Some(enc_probe::RealEncoderProbe.probe(&config.camera.encoder_device))
+        }
+        #[cfg(not(feature = "v4l2-encoder"))]
+        {
+            None
+        }
+    };
+    let (selection, note) = match enc_probe::decide(&config.camera.encoder, availability) {
+        Ok(res) => res,
+        Err(e) => {
+            eprintln!("camera: encoder selection failed — {e}");
+            return None;
+        }
+    };
+    println!("camera: {note}");
+
+    // H.264 encoder configuration shared by both paths.
     let camera_config = CameraConfig {
         width,
         height,
         fps,
         bitrate_bps: bitrate,
-        device_path: "/dev/video11".to_string(), // bcm2835-codec-encode
+        device_path: config.camera.encoder_device.clone(),
         profile: H264Profile::High,
         level: H264Level::Level4_0,
         i_period: fps * 2, // IDR every 2 seconds
     };
 
-    let mut camera = V4l2CameraSource::new(camera_config, producer);
+    let mut camera: Box<dyn CameraSource> = match selection {
+        SelectedEncoder::Hardware => {
+            #[cfg(feature = "v4l2-encoder")]
+            {
+                Box::new(V4l2CameraSource::new(camera_config, producer))
+            }
+            // decide() never selects Hardware when the feature is off.
+            #[cfg(not(feature = "v4l2-encoder"))]
+            {
+                unreachable!("hardware encoder selected in a software-only build")
+            }
+        }
+        SelectedEncoder::Software => {
+            #[cfg(feature = "software-encoder")]
+            {
+                Box::new(SoftwareCameraSource::new(camera_config, producer))
+            }
+            #[cfg(not(feature = "software-encoder"))]
+            {
+                let _ = camera_config;
+                unreachable!("software encoder selected in a hardware-only build")
+            }
+        }
+    };
 
     match camera.start().await {
         Ok(()) => println!("camera: H.264 encoder started"),

@@ -21,6 +21,22 @@ device = "/dev/video0"
 # type: string  |  default: "mtxrpicam"  |  env: MIBEE_EYE_CAMERA_MODE
 mode = "mtxrpicam"
 
+# H.264 encoder selection:
+#   "auto"     - probe encoder_device; use the V4L2 M2M hardware encoder when
+#                capable, otherwise fall back to the in-process software
+#                encoder (openh264). Works on any Linux board.
+#   "hardware" - V4L2 M2M only; startup fails with diagnostics when the node
+#                is missing or not M2M-capable.
+#   "software" - always the in-process openh264 encoder (no device needed;
+#                mind the CPU budget on weak boards).
+# type: string  |  default: "auto"  |  env: MIBEE_EYE_CAMERA_ENCODER
+encoder = "auto"
+
+# V4L2 M2M encoder node for the hardware path. bcm2835-codec-encode on the
+# Raspberry Pi family; configure per SoC (e.g. an i.MX coda node).
+# type: string  |  default: "/dev/video11"  |  env: MIBEE_EYE_CAMERA_ENCODER_DEVICE
+encoder_device = "/dev/video11"
+
 # External RTSP URL when mode = "rtsp"
 # type: string  |  default: ""  |  env: MIBEE_EYE_CAMERA_RTSP_URL
 # rtsp_url = "rtsp://192.168.1.100:554/stream"

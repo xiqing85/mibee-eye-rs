@@ -61,6 +61,12 @@ fn default_device() -> String {
 fn default_mode() -> String {
     "mtxrpicam".to_string()
 }
+fn default_encoder() -> String {
+    "auto".to_string()
+}
+fn default_encoder_device() -> String {
+    "/dev/video11".to_string()
+}
 fn default_camera_width() -> u32 {
     1280
 }
@@ -179,6 +185,15 @@ pub struct CameraConfig {
     pub device: String,
     #[serde(default = "default_mode")]
     pub mode: String,
+    /// H.264 encoder selection: "auto" (probe the V4L2 M2M node, fall back
+    /// to the in-process software encoder), "hardware" (V4L2 M2M only, no
+    /// fallback) or "software" (openh264, no device needed).
+    #[serde(default = "default_encoder")]
+    pub encoder: String,
+    /// V4L2 M2M encoder node used when `encoder` resolves to hardware
+    /// (bcm2835-codec-encode on Raspberry Pi; configure per SoC).
+    #[serde(default = "default_encoder_device")]
+    pub encoder_device: String,
     #[serde(default)]
     pub rtsp_url: String,
     #[serde(default = "default_camera_width")]
@@ -535,6 +550,8 @@ impl Default for CameraConfig {
         Self {
             device: default_device(),
             mode: default_mode(),
+            encoder: default_encoder(),
+            encoder_device: default_encoder_device(),
             rtsp_url: String::new(),
             width: default_camera_width(),
             height: default_camera_height(),
@@ -725,6 +742,15 @@ impl Config {
                 )));
             }
         }
+        match self.camera.encoder.as_str() {
+            "auto" | "hardware" | "software" => {}
+            _ => {
+                return Err(ConfigError::Validation(format!(
+                    "camera.encoder must be auto, hardware or software, got: {}",
+                    self.camera.encoder
+                )));
+            }
+        }
 
         // --- rtsp ---
         if self.rtsp.port == 0 {
@@ -876,6 +902,11 @@ fn apply_env_overrides(config: &mut Config) {
     // --- camera ---
     override_str("MIBEE_EYE_CAMERA_DEVICE", &mut config.camera.device);
     override_str("MIBEE_EYE_CAMERA_MODE", &mut config.camera.mode);
+    override_str("MIBEE_EYE_CAMERA_ENCODER", &mut config.camera.encoder);
+    override_str(
+        "MIBEE_EYE_CAMERA_ENCODER_DEVICE",
+        &mut config.camera.encoder_device,
+    );
     override_str("MIBEE_EYE_CAMERA_RTSP_URL", &mut config.camera.rtsp_url);
     override_int("MIBEE_EYE_CAMERA_WIDTH", &mut config.camera.width);
     override_int("MIBEE_EYE_CAMERA_HEIGHT", &mut config.camera.height);
@@ -1110,12 +1141,16 @@ mod tests {
         // camera
         assert_eq!(cfg.camera.device, "/dev/video0");
         assert_eq!(cfg.camera.mode, "mtxrpicam");
+        assert_eq!(cfg.camera.encoder, "auto");
+        assert_eq!(cfg.camera.encoder_device, "/dev/video11");
         assert_eq!(cfg.camera.rtsp_url, "");
         assert_eq!(cfg.camera.width, 1280);
         assert_eq!(cfg.camera.height, 720);
         assert_eq!(cfg.camera.fps, 15);
         assert_eq!(cfg.camera.codec, "h264");
         assert_eq!(cfg.camera.bitrate, 2_000_000);
+        assert_eq!(cfg.camera.encoder, "auto");
+        assert_eq!(cfg.camera.encoder_device, "/dev/video11");
         assert!((cfg.camera.brightness - 0.0).abs() < 1e-9);
         assert!((cfg.camera.contrast - 1.0).abs() < 1e-9);
         assert!((cfg.camera.saturation - 1.0).abs() < 1e-9);
@@ -1448,6 +1483,8 @@ enabled = false
 [camera]
 device = "/dev/video2"
 mode = "rtsp"
+encoder = "software"
+encoder_device = "/dev/video21"
 rtsp_url = "rtsp://192.168.1.100:554/stream"
 width = 1920
 height = 1080
@@ -1525,6 +1562,8 @@ enabled = true
         // camera
         assert_eq!(cfg.camera.device, "/dev/video2");
         assert_eq!(cfg.camera.mode, "rtsp");
+        assert_eq!(cfg.camera.encoder, "software");
+        assert_eq!(cfg.camera.encoder_device, "/dev/video21");
         assert_eq!(cfg.camera.rtsp_url, "rtsp://192.168.1.100:554/stream");
         assert_eq!(cfg.camera.width, 1920);
         assert_eq!(cfg.camera.height, 1080);
@@ -1832,6 +1871,33 @@ port = 8080
     // ------------------------------------------------------------------
     // Environment variable overrides
     // ------------------------------------------------------------------
+
+    #[test]
+    fn test_invalid_encoder_rejected() {
+        let mut cfg = Config::default();
+        cfg.camera.encoder = "quantum".to_string();
+        let err = cfg
+            .validate()
+            .expect_err("invalid encoder must fail validation");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("camera.encoder must be auto, hardware or software"),
+            "got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_env_override_encoder() {
+        let _guard = ENV_LOCK.lock();
+        unsafe { std::env::set_var("MIBEE_EYE_CAMERA_ENCODER", "software") };
+        unsafe { std::env::set_var("MIBEE_EYE_CAMERA_ENCODER_DEVICE", "/dev/video31") };
+        let mut cfg = Config::default();
+        apply_env_overrides(&mut cfg);
+        assert_eq!(cfg.camera.encoder, "software");
+        assert_eq!(cfg.camera.encoder_device, "/dev/video31");
+        unsafe { std::env::remove_var("MIBEE_EYE_CAMERA_ENCODER") };
+        unsafe { std::env::remove_var("MIBEE_EYE_CAMERA_ENCODER_DEVICE") };
+    }
 
     #[test]
     fn test_env_override_string() {

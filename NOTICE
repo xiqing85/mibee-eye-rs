@@ -13,3 +13,8 @@ under the MIT License.
 This product bundles the Noto Sans SC font (assets/fonts/NotoSansSC-Common.otf),
 Copyright (c) The Noto Project Authors, licensed under the SIL Open Font
 License 1.1 — see assets/fonts/LICENSE-NotoCJK.txt.
+
+This product includes software from the OpenH264 project
+(https://github.com/cisco/openh264), Copyright (c) Cisco Systems, Inc.,
+licensed under the BSD 2-Clause License (vendored via the openh264 Rust
+crate and built from source at compile time).

@@ -300,13 +300,20 @@ http://<camera-ip>:8080/onvif/device_service
 
 ### Raspberry Pi
 
-Capture is generic V4L2 (`/dev/video0`, configurable — USB/UVC cameras work),
-but H.264 encoding uses the Pi's V4L2 M2M encoder node (`/dev/video11`,
-bcm2835-codec), which is currently required — there is no software-encoder
-fallback. Porting to other SBCs needs that node made configurable plus a
-verified V4L2 M2M encoder on the target SoC (see
-[hardware/capability.rs](src/hardware/capability.rs) for the model-based
-AI capability gate).
+**Any Linux board works.** Capture is generic V4L2 (`/dev/video0`,
+configurable — USB/UVC cameras work anywhere). For encoding, `camera.encoder`
+selects the path:
+
+| `camera.encoder` | Behaviour |
+|------------------|-----------|
+| `auto` (default) | Probe `camera.encoder_device` (`/dev/video11` by default) — use the V4L2 M2M **hardware** encoder when the node is M2M-capable (Raspberry Pi family, i.MX coda, …), otherwise fall back to the in-process **software** encoder (openh264) |
+| `hardware` | V4L2 M2M only — startup fails with clear diagnostics when the node is missing or not M2M-capable |
+| `software` | Always openh264 — no encoder device needed; mind the CPU budget on weak boards (≤720p15 on A53-class) |
+
+So: Raspberry Pi 3/4/5 (and Zero 2 W / CM) hardware-encode out of the box;
+x86 boxes, NAS and most arm SBCs run with the software encoder automatically.
+AI capability gating is memory/model based (see
+[hardware/capability.rs](src/hardware/capability.rs)).
 
 | Model | Camera Interface | Notes |
 |-------|------------------|-------|

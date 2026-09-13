@@ -290,10 +290,17 @@ http://<相机IP>:8080/onvif/device_service
 
 ### 树莓派
 
-采集是通用 V4L2（`/dev/video0`，可配置 —— USB/UVC 相机可用），但 H.264 编码
-使用树莓派的 V4L2 M2M 编码节点（`/dev/video11`，bcm2835-codec），目前为硬性
-依赖 —— 没有软件编码回退。移植到其它 SBC 需要把该节点配置化，并验证目标 SoC
-的 V4L2 M2M 编码器（AI 能力门按型号白名单，见
+**任意 Linux 板可用。** 采集是通用 V4L2（`/dev/video0`，可配置 —— USB/UVC
+相机随处可用）。编码由 `camera.encoder` 决定路径：
+
+| `camera.encoder` | 行为 |
+|------------------|------|
+| `auto`（默认） | 探测 `camera.encoder_device`（默认 `/dev/video11`）——节点具备 M2M 能力（树莓派家族、i.MX coda 等）则用 V4L2 M2M **硬件**编码，否则自动回退进程内**软件**编码（openh264） |
+| `hardware` | 仅 V4L2 M2M——节点缺失或非 M2M 时启动报错并给出诊断 |
+| `software` | 恒用 openh264——无需编码设备；弱板注意 CPU 预算（A53 级建议 ≤720p15） |
+
+即：树莓派 3/4/5（含 Zero 2 W / CM）开箱硬编；x86 主机、NAS 与多数 arm SBC
+自动以软件编码运行。AI 能力门按内存/型号判定（见
 [hardware/capability.rs](src/hardware/capability.rs)）。
 
 | 型号 | 相机接口 | 说明 |

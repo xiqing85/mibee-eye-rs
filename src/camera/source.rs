@@ -221,6 +221,37 @@ impl CameraConfig {
 }
 
 // ---------------------------------------------------------------------------
+// FrameProducer trait
+// ---------------------------------------------------------------------------
+
+/// Produces raw YUV video frames to be encoded by an H.264 encoder
+/// (V4L2 M2M hardware node or the in-process software encoder).
+///
+/// Implementations capture from a camera sensor (direct V4L2 capture from
+/// `/dev/video0`, USB/UVC or platform nodes) and return raw I420 (YUV420
+/// planar) data.
+///
+/// This trait is **synchronous** — the encoding thread calls
+/// `next_yuv_frame` in a tight loop.  Producers that perform I/O should
+/// use blocking system calls.
+pub trait FrameProducer: Send + 'static {
+    /// Return the next raw YUV frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CameraError::Disconnected`] if the camera has been
+    /// removed, or [`CameraError::Io`] for transient failures (the
+    /// encoder loop will retry).
+    fn next_yuv_frame(&mut self) -> Result<Vec<u8>, CameraError>;
+
+    /// Width and height of frames produced by this source.
+    fn resolution(&self) -> (u32, u32);
+
+    /// Target frame rate in frames per second.
+    fn fps(&self) -> u32;
+}
+
+// ---------------------------------------------------------------------------
 // CameraSource trait
 // ---------------------------------------------------------------------------
 
