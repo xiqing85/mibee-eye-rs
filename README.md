@@ -1,6 +1,6 @@
 # MiBee Eye (蜂眼) — Rust
 
-[![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC_BY--NC--4.0-lightgrey.svg)](LICENSE)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.88+-blue.svg)](https://rustup.rs)
 
 [中文文档](README_zh.md)
@@ -32,9 +32,10 @@ Both: AI detection (NanoDet, opt-in) · GB 35114 A-level (opt-in) · continuous
 recording with GB28181 playback · imaging controls · snapshot.
 
 > **Design note** — the Go implementation drives libcamera through the
-> `mtxrpicam`/`rpicam-vid` front end (a subprocess pipe) and uses `ffmpeg`
-> only for HLS; this Rust implementation captures and encodes natively via
-> V4L2, so the service runs with no subprocesses at all.
+> `mtxrpicam`/`rpicam-vid` front end (a subprocess pipe), and uses `ffmpeg`
+> only for the optional AI keyframe decode (HLS is a pure-Go MPEG-TS
+> segmenter, no ffmpeg); this Rust implementation captures and encodes
+> natively via V4L2, so the service runs with no subprocesses at all.
 
 ---
 
@@ -141,7 +142,7 @@ sequenceDiagram
 | Metric | Go implementation | Rust implementation |
 |--------|-------------------|---------------------|
 | Binary size | ~15 MB | ~2 MB |
-| Memory usage | 15–25 MB (+15 MB for ffmpeg) | 6–12 MB |
+| Memory usage | 15–25 MB (+15 MB when the optional AI build is used) | 6–12 MB |
 | Subprocess dependencies | mtxrpicam + ffmpeg (HLS) | none |
 | CPU usage | ~15% | ~10% |
 
@@ -299,6 +300,14 @@ http://<camera-ip>:8080/onvif/device_service
 
 ### Raspberry Pi
 
+Capture is generic V4L2 (`/dev/video0`, configurable — USB/UVC cameras work),
+but H.264 encoding uses the Pi's V4L2 M2M encoder node (`/dev/video11`,
+bcm2835-codec), which is currently required — there is no software-encoder
+fallback. Porting to other SBCs needs that node made configurable plus a
+verified V4L2 M2M encoder on the target SoC (see
+[hardware/capability.rs](src/hardware/capability.rs) for the model-based
+AI capability gate).
+
 | Model | Camera Interface | Notes |
 |-------|------------------|-------|
 | **RPi 3B** | CSI (V4L2) | Recommended: OV5647 camera module |
@@ -386,10 +395,9 @@ cargo build --release --features "multi-camera,webrtc,h265"
 
 ## License
 
-Source code is licensed **CC BY-NC 4.0 (non-commercial)** — see [LICENSE](LICENSE).
-MediaMTX-derived portions and the bundled Noto font keep their own licenses
-(see [NOTICE](NOTICE)).
+Licensed under the **Apache License, Version 2.0** — see [LICENSE](LICENSE).
+Third-party components keep their own licenses (MediaMTX-derived portions
+remain MIT; the bundled Noto font remains OFL-1.1) — see [NOTICE](NOTICE).
 
-**Commercial licensing** — use in commercial products or deployments requires
-a separate license from the author. Open an issue titled `[commercial-license]`
-to get in touch.
+> Licensing history: v0.1.0 shipped under CC BY-NC 4.0; the project
+> relicensed to Apache-2.0 on 2026-09-13 (sole copyright holder).

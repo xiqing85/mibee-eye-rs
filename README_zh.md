@@ -1,6 +1,6 @@
 # MiBee Eye（蜂眼）— Rust
 
-[![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC_BY--NC--4.0-lightgrey.svg)](LICENSE)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.88+-blue.svg)](https://rustup.rs)
 
 [English](README.md)
@@ -29,7 +29,8 @@ SPEC v1 Web UI/API、对接同样的 NVR —— 按部署画像选择：
 回放 · 图像调节 · 快照。
 
 > **设计说明** —— Go 实现通过 `mtxrpicam`/`rpicam-vid` 前端驱动 libcamera
-> （子进程管道），HLS 另用 `ffmpeg`；本 Rust 实现经 V4L2 原生采集与编码，
+> （子进程管道），`ffmpeg` 仅用于可选的 AI 关键帧解码（HLS 为纯 Go
+> MPEG-TS 分段器，不依赖 ffmpeg）；本 Rust 实现经 V4L2 原生采集与编码，
 > 服务全程零子进程。
 
 ---
@@ -136,7 +137,7 @@ sequenceDiagram
 | 指标 | Go 实现 | Rust 实现 |
 |------|---------|-----------|
 | 二进制体积 | ~15 MB | ~2 MB |
-| 内存占用 | 15–25 MB（ffmpeg 另加 15 MB） | 6–12 MB |
+| 内存占用 | 15–25 MB（启用可选 AI 构建时另加 15 MB） | 6–12 MB |
 | 子进程依赖 | mtxrpicam + ffmpeg（HLS） | 无 |
 | CPU 占用 | ~15% | ~10% |
 
@@ -289,6 +290,12 @@ http://<相机IP>:8080/onvif/device_service
 
 ### 树莓派
 
+采集是通用 V4L2（`/dev/video0`，可配置 —— USB/UVC 相机可用），但 H.264 编码
+使用树莓派的 V4L2 M2M 编码节点（`/dev/video11`，bcm2835-codec），目前为硬性
+依赖 —— 没有软件编码回退。移植到其它 SBC 需要把该节点配置化，并验证目标 SoC
+的 V4L2 M2M 编码器（AI 能力门按型号白名单，见
+[hardware/capability.rs](src/hardware/capability.rs)）。
+
 | 型号 | 相机接口 | 说明 |
 |------|---------|------|
 | **RPi 3B** | CSI（V4L2） | 推荐 OV5647 模组 |
@@ -375,8 +382,9 @@ cargo build --release --features "multi-camera,webrtc,h265"
 
 ## 许可证
 
-源代码许可为 **CC BY-NC 4.0（非商业性使用，禁止商用）**—— 详见 [LICENSE](LICENSE)。
-MediaMTX 衍生部分与内置 Noto 字体沿用各自许可（见 [NOTICE](NOTICE)）。
+以 **Apache License, Version 2.0** 授权 —— 详见 [LICENSE](LICENSE)。
+第三方组件沿用各自许可（MediaMTX 衍生部分为 MIT；内置 Noto 字体为
+OFL-1.1）—— 见 [NOTICE](NOTICE)。
 
-**商业授权** —— 用于商业产品或部署需另行获得作者授权；
-请开标题前缀为 `[commercial-license]` 的 issue 联系。
+> 许可历史：v0.1.0 曾以 CC BY-NC 4.0 发布；2026-09-13 起项目改为
+> Apache-2.0（唯一版权持有人变更）。

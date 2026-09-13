@@ -3,7 +3,7 @@ name = "mibee-eye-raspi-rs"
 version = "0.1.0"
 edition = "2021"
 description = "ONVIF camera service for Raspberry Pi — Rust rewrite of mibee-eye-raspi"
-license = "CC-BY-NC-4.0"
+license = "Apache-2.0"
 repository = "https://github.com/xiqing85/mibee-eye-raspi-rs"
 categories = ["multimedia", "command-line-utilities"]
 

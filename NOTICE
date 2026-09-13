@@ -1,18 +1,15 @@
 MiBee Eye (Rust) — mibee-eye-raspi-rs
-Copyright (c) 2026 MiBee Eye contributors
+Copyright 2026 MiBee Eye contributors
 
-The original code in this repository is licensed under the
-Creative Commons Attribution-NonCommercial 4.0 International
-(CC BY-NC 4.0) — see LICENSE. Commercial use is not permitted.
+This product includes software developed as part of MiBee Eye
+(https://github.com/xiqing85/mibee-eye-raspi-rs), licensed under the
+Apache License, Version 2.0.
 
-Third-party components keep their own licenses:
+Portions of this software are derived from MediaMTX
+(https://github.com/bluenviron/mediamtx), Copyright (c) bluenviron and
+contributors, distributed under the MIT License. These portions remain
+under the MIT License.
 
-Portions of this software are derived from MediaMTX.
-MediaMTX is Copyright (c) bluenviron and contributors.
-MediaMTX is distributed under the MIT License.
-Source: https://github.com/bluenviron/mediamtx
-These portions remain under the MIT License.
-
-assets/fonts/NotoSansSC-Common.otf is Copyright (c) The Noto Project
-Authors, licensed under the SIL Open Font License 1.1 — see
-assets/fonts/LICENSE-NotoCJK.txt.
+This product bundles the Noto Sans SC font (assets/fonts/NotoSansSC-Common.otf),
+Copyright (c) The Noto Project Authors, licensed under the SIL Open Font
+License 1.1 — see assets/fonts/LICENSE-NotoCJK.txt.
