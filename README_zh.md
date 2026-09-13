@@ -5,8 +5,8 @@
 
 [English](README.md)
 
-树莓派 ONVIF 摄像头服务 —— MiBee Eye 的 **Rust 实现**。
-另有一个兄弟 [Go 实现](https://github.com/xiqing85/mibee-eye-raspi-go)，
+把任意 Linux 板变成 ONVIF / GB28181 网络摄像头的服务 —— MiBee Eye 的 **Rust 实现**。
+另有一个兄弟 [Go 实现](https://github.com/xiqing85/mibee-eye-go)，
 部署画像不同，见[我该选哪个实现？](#我该选哪个实现)。
 
 原生 V4L2/libcamera 采集 H.264 视频（采集与编码全程进程内完成），
@@ -151,7 +151,7 @@ sequenceDiagram
 ### 本机构建
 
 ```bash
-git clone https://github.com/xiqing85/mibee-eye-raspi-rs.git
+git clone https://github.com/xiqing85/mibee-eye-rs.git
 cd mibee-eye-raspi-rs
 cargo build --release
 ```

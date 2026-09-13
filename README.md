@@ -5,8 +5,8 @@
 
 [中文文档](README_zh.md)
 
-ONVIF camera service for Raspberry Pi — the **Rust implementation** of
-MiBee Eye. A sibling [Go implementation](https://github.com/xiqing85/mibee-eye-raspi-go)
+ONVIF / GB28181 IP-camera service that turns any Linux board into a camera
+— the **Rust implementation** of MiBee Eye. A sibling [Go implementation](https://github.com/xiqing85/mibee-eye-go)
 exists with a different deployment profile — see
 [Which implementation should I use?](#which-implementation-should-i-use).
 
@@ -156,7 +156,7 @@ with [`bench/rpi-bench.sh`](bench/rpi-bench.sh).
 ### Native Build
 
 ```bash
-git clone https://github.com/xiqing85/mibee-eye-raspi-rs.git
+git clone https://github.com/xiqing85/mibee-eye-rs.git
 cd mibee-eye-raspi-rs
 cargo build --release
 ```

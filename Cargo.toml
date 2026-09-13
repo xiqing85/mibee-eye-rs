@@ -2,9 +2,9 @@
 name = "mibee-eye-raspi-rs"
 version = "0.1.0"
 edition = "2021"
-description = "ONVIF camera service for Raspberry Pi — Rust rewrite of mibee-eye-raspi"
+description = "Turn any Linux board into an ONVIF / GB28181 IP camera — the Rust implementation of MiBee Eye"
 license = "Apache-2.0"
-repository = "https://github.com/xiqing85/mibee-eye-raspi-rs"
+repository = "https://github.com/xiqing85/mibee-eye-rs"
 categories = ["multimedia", "command-line-utilities"]
 
 [dependencies]
