@@ -17,7 +17,10 @@ URL="${2:-rtsp://127.0.0.1:8554/stream}"
 SECS="${3:-60}"
 HZ=$(getconf CLK_TCK)
 
+# Kernel comm fields are capped at 15 chars, so pgrep -x can never match a
+# longer binary name — fall back to the truncated comm before failing.
 PID="$(pgrep -x "${BIN}" | head -n1 || true)"
+[ -n "${PID}" ] || PID="$(pgrep -x "${BIN:0:15}" | head -n1 || true)"
 [ -n "${PID}" ] || { echo "error: ${BIN} is not running" >&2; exit 1; }
 
 ffmpeg -hide_banner -loglevel error -rtsp_transport tcp -i "${URL}" \

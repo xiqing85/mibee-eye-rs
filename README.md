@@ -142,12 +142,18 @@ sequenceDiagram
 | Metric | Go implementation | Rust implementation |
 |--------|-------------------|---------------------|
 | Binary size | ~15 MB | ~2 MB |
-| Memory usage | 15–25 MB (+15 MB when the optional AI build is used) | 6–12 MB |
+| Memory usage (full feature set) | 15–25 MB (+15 MB when the optional AI build is used) | **~94 MB measured** (v0.2.0, see below) |
 | Subprocess dependencies | mtxrpicam + ffmpeg (HLS) | none |
-| CPU usage | ~15% | ~10% |
+| CPU usage | ~15% | **~1.4 cores measured** (v0.2.0, see below) |
 
-Indicative numbers from our RPi 3B deployments — reproduce on your own board
-with [`bench/rpi-bench.sh`](bench/rpi-bench.sh).
+Measured 2026-09-14 on `rpi3b-storage` (RPi 3B, OV5647 1280×720@15, v0.2.0,
+hardware V4L2 M2M encoder `/dev/video11`, GB28181 registered + recording +
+watermark ON, AI OFF, per-frame INFO logging ON, one RTSP/TCP client, 60 s,
+13 samples): RSS flat at 93.8 MB (max = avg — steady state, no client
+overhead on top: a no-client sample reads the same), CPU 124–146%
+(≈139% avg of the four cores). A bare pipeline without GB28181/recording/
+watermark sits far lower — treat these as full-feature numbers, and
+reproduce on your own board with [`bench/rpi-bench.sh`](bench/rpi-bench.sh).
 
 ---
 
