@@ -21,7 +21,7 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
-          targets: aarch64-unknown-linux-gnu,aarch64-unknown-linux-musl,x86_64-unknown-linux-musl
+          targets: aarch64-unknown-linux-gnu,aarch64-unknown-linux-musl,x86_64-unknown-linux-musl,armv7-unknown-linux-musleabihf
 
       - name: Install cargo-zigbuild + zig
         run: |
@@ -29,20 +29,21 @@ jobs:
           cargo install --locked cargo-zigbuild
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      - name: Build (aarch64 gnu + musl, x86_64 musl; v4l2-encoder + ai)
+      - name: Build (aarch64 gnu + musl, x86_64 musl, armv7 musl; v4l2-encoder + ai)
         run: |
-          for t in aarch64-unknown-linux-gnu aarch64-unknown-linux-musl x86_64-unknown-linux-musl; do
+          for t in aarch64-unknown-linux-gnu aarch64-unknown-linux-musl x86_64-unknown-linux-musl armv7-unknown-linux-musleabihf; do
             cargo zigbuild --release --features v4l2-encoder,ai --target "$t"
           done
 
       - name: Package
         run: |
           rm -f checksums.txt
-          for t in aarch64-unknown-linux-gnu aarch64-unknown-linux-musl x86_64-unknown-linux-musl; do
+          for t in aarch64-unknown-linux-gnu aarch64-unknown-linux-musl x86_64-unknown-linux-musl armv7-unknown-linux-musleabihf; do
             case "$t" in
               aarch64-unknown-linux-gnu)  arch=arm64 ;;
               aarch64-unknown-linux-musl) arch=arm64-musl ;;
               x86_64-unknown-linux-musl)  arch=amd64-musl ;;
+              armv7-unknown-linux-musleabihf) arch=armv7-musleabihf ;;
             esac
             DIR="mibee-eye-raspi-rs-${GITHUB_REF_NAME}.linux-${arch}"
             mkdir -p "${DIR}/deploy"

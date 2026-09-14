@@ -2,6 +2,18 @@
 
 Notable changes to MiBee Eye (Rust implementation) are documented here.
 
+## [Unreleased]
+
+- **armv7 release target unblocked** — the ILP32 compile failure in
+  gb28181-rs (`tm_gmtoff` width, upstream
+  [gb28181-rs#55](https://github.com/mickeyzzc/gb28181-rs/issues/55)) is
+  fixed upstream and consumed via a git pin (`fc049b8`, unreleased there —
+  per the merge-≠-release cadence); `armv7-unknown-linux-musleabihf` joins
+  the release matrix with the next tag. Local cross-build verified
+  (full feature set, statically linked ~5 MB). No 32-bit hardware in the
+  test fleet — treat the armv7 artifact as software-encode oriented
+  (boards with a V4L2 M2M encoder are untested on 32-bit).
+
 ## [0.2.0] — 2026-09-13
 
 ### Added
