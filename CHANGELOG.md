@@ -4,6 +4,24 @@ Notable changes to MiBee Eye (Rust implementation) are documented here.
 
 ## [Unreleased]
 
+- **`storage-webdav` / `storage-s3` / `storage-smb` features wired up** —
+  the three `StorageBackend` implementations compiled behind these flags
+  referenced crates that were never declared in `Cargo.toml`, so enabling
+  any of them failed the build (and kept `cargo clippy --all-features`
+  red; CI only exercised default features, which is why it went
+  unnoticed). They now build and their mock-HTTP test suites pass:
+  optional deps `reqwest` (rustls, no OpenSSL) and `rust-s3` 0.37
+  (path-style addressing for self-hosted S3-compatible endpoints,
+  library-internal retries disabled so the module's documented
+  exponential-backoff retry contract is the only policy). CI gains an
+  `all-features` job (clippy `--all-features --all-targets` + storage
+  tests) so optional features cannot rot silently again. The backends
+  remain library-surface opt-ins: the GB28181 recorder still writes local
+  disk directly. Two latent test-fixture bugs fixed with evidence: mock
+  paths assumed second-based keys while `build_key` emits milliseconds
+  (`12345000_00000.m4v`), and the retry-then-success mocks needed
+  `up_to_n_times(1)` (wiremock `expect()` verifies but does not limit
+  matching).
 - **armv7 release target unblocked** — the ILP32 compile failure in
   gb28181-rs (`tm_gmtoff` width, upstream
   [gb28181-rs#55](https://github.com/mickeyzzc/gb28181-rs/issues/55)) is

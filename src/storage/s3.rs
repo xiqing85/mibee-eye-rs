@@ -25,7 +25,16 @@ const BASE_RETRY_MS: u64 = 500;
 /// | `S3_ACCESS_KEY` | Yes | Access key ID |
 /// | `S3_SECRET_KEY` | Yes | Secret access key |
 pub struct S3Storage {
-    bucket: Bucket,
+    bucket: Box<Bucket>,
+}
+
+// Debug exposes the bucket name only — never the credentials.
+impl std::fmt::Debug for S3Storage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("S3Storage")
+            .field("bucket", &self.bucket.name())
+            .finish_non_exhaustive()
+    }
 }
 
 impl S3Storage {
@@ -55,8 +64,19 @@ impl S3Storage {
             endpoint: endpoint.clone(),
         };
 
+        // Path-style addressing ({endpoint}/{bucket}/{key}): self-hosted
+        // S3-compatible servers (MinIO, Ceph RGW, NAS gateways) don't provide
+        // wildcard DNS for virtual-host style, and bucket-in-hostname URLs
+        // don't even parse against raw-IP endpoints.
         let bucket = Bucket::new(&bucket_name, s3_region, credentials)
-            .map_err(|e| StorageError::Config(format!("S3 bucket config error: {e}")))?;
+            .map_err(|e| StorageError::Config(format!("S3 bucket config error: {e}")))?
+            .with_path_style();
+
+        // rust-s3 retries internally (global default: 1 attempt on top of
+        // the request). This backend owns its bounded exponential-backoff
+        // retry policy (MAX_RETRIES), so disable the library's to keep the
+        // effective request count equal to the documented contract.
+        s3::set_retries(0);
 
         Ok(Self { bucket })
     }
@@ -85,15 +105,14 @@ impl StorageBackend for S3Storage {
                 Ok(_response) => {
                     return Ok(StoredSegment {
                         id: key.clone(),
-                        path: format!("s3://{}/{}", self.bucket.name(), &key),
+                        path: format!("s3://{}/{}", self.bucket.name(), key),
                         size_bytes: segment.data.len() as u64,
                     });
                 }
                 Err(e) => {
-                    last_err = Some(StorageError::Io(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("S3 put_object failed: {e}"),
-                    )));
+                    last_err = Some(StorageError::Io(std::io::Error::other(format!(
+                        "S3 put_object failed: {e}"
+                    ))));
                 }
             }
 
@@ -103,10 +122,7 @@ impl StorageBackend for S3Storage {
         }
 
         Err(last_err.unwrap_or_else(|| {
-            StorageError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "S3 save failed after retries",
-            ))
+            StorageError::Io(std::io::Error::other("S3 save failed after retries"))
         }))
     }
 
@@ -151,9 +167,14 @@ mod tests {
             region: "us-east-1".into(),
             endpoint: endpoint.into(),
         };
+        // Mirror from_env(): no library-internal retries — the module's own
+        // retry loop is the contract under test.
+        s3::set_retries(0);
         // Use anonymous credentials for the mock
         let creds = Credentials::new(Some("minio"), Some("minio123"), None, None, None).unwrap();
-        let bucket = Bucket::new(bucket_name, region, creds).unwrap();
+        let bucket = Bucket::new(bucket_name, region, creds)
+            .unwrap()
+            .with_path_style();
         S3Storage { bucket }
     }
 
@@ -199,7 +220,7 @@ mod tests {
 
         // S3 PutObject: PUT /{bucket}/{key} -> 200 with ETag
         Mock::given(method("PUT"))
-            .and(path(format!("/{bucket_name}/12345_00000.m4v")))
+            .and(path(format!("/{bucket_name}/12345000_00000.m4v")))
             .respond_with(
                 ResponseTemplate::new(200)
                     .insert_header("x-amz-request-id", "req1")
@@ -228,7 +249,7 @@ mod tests {
 
         // Always return 500 InternalError
         Mock::given(method("PUT"))
-            .and(path(format!("/{bucket_name}/12345_00001.m4v")))
+            .and(path(format!("/{bucket_name}/12345000_00001.m4v")))
             .respond_with(ResponseTemplate::new(500))
             .expect(3) // MAX_RETRIES
             .mount(&mock_server)
@@ -247,17 +268,20 @@ mod tests {
         let bucket_name = "test-bucket";
         let store = make_mock_storage(&mock_server.uri(), bucket_name);
 
-        // First respond with 503
+        // First respond with 503, then 200. `up_to_n_times` makes the 503
+        // mock stop matching after its single hit (expect() only verifies,
+        // it does not limit matching).
         Mock::given(method("PUT"))
-            .and(path(format!("/{bucket_name}/12345_00002.m4v")))
+            .and(path(format!("/{bucket_name}/12345000_00002.m4v")))
             .respond_with(ResponseTemplate::new(503))
+            .up_to_n_times(1)
             .expect(1)
             .mount(&mock_server)
             .await;
 
         // Then respond with success
         Mock::given(method("PUT"))
-            .and(path(format!("/{bucket_name}/12345_00002.m4v")))
+            .and(path(format!("/{bucket_name}/12345000_00002.m4v")))
             .respond_with(ResponseTemplate::new(200))
             .expect(1)
             .mount(&mock_server)

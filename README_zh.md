@@ -396,9 +396,14 @@ cargo build --release --features "ai"
 # GB 35114 A 级安全（SM2 证书认证 + keyed-SM3 完整性）
 cargo build --release --features "gb35114"
 
-# 远程录像存储后端（S3 / WebDAV / SMB）—— 保留项：storage-s3 /
-# storage-webdav / storage-smb 三个 feature 开关已预留但尚未接线
-# （缺可选依赖）；录像器目前恒写本地，请勿启用
+# 远程录像存储后端（WebDAV / S3 / SMB 挂载点）—— 编译期可选的
+# `StorageBackend` 实现。纯 Rust TLS（rustls）：musl 静态交叉构建安全，
+# 不引入 OpenSSL。凭证一律来自环境变量（WEBDAV_* / S3_* / SMB_MOUNT_PATH，
+# 详见 src/storage/ 模块文档）。注意：GB28181 录像器恒写本地磁盘，
+# 这些后端面向把本 crate 当库使用的集成方。
+cargo build --release --features "storage-webdav"
+cargo build --release --features "storage-s3"
+cargo build --release --features "storage-smb"
 
 # 规划中特性 —— 占位 feature（当前无实际作用）
 cargo build --release --features "multi-camera,webrtc,h265"

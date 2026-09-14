@@ -48,6 +48,16 @@ anyhow = "1"
 ort = { version = "2.0.0-rc.13", optional = true, default-features = false, features = ["load-dynamic"] }
 core_affinity = { version = "0.8", optional = true }
 openh264 = { version = "0.9.8", optional = true }
+# Remote storage backends — optional, pure-Rust TLS (rustls) so the musl
+# static cross-build stays C-toolchain-free (no openssl-sys).
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
+rust-s3 = { version = "0.37", default-features = false, features = ["tokio-rustls-tls", "fail-on-err"], optional = true }
+# Test-only helpers for the storage backends (mock HTTP + env isolation).
+# Optional regular deps gated by the storage features: dev-dependencies
+# cannot be feature-gated, and an unconditional dev-dep would tax every
+# default-feature test build. Unused deps are not linked into release bins.
+wiremock = { version = "0.6", optional = true }
+temp-env = { version = "0.3", optional = true }
 
 [profile.release]
 opt-level = "z"
@@ -67,8 +77,8 @@ v4l2-encoder = ["shiguredo_v4l2"]
 # In-process software H.264 encoder (openh264, BSD-2-Clause). Default-on so
 # boards without a V4L2 M2M encoder node work out of the box (auto fallback).
 software-encoder = ["dep:openh264"]
-storage-webdav = []
-storage-s3 = []
+storage-webdav = ["dep:reqwest", "dep:wiremock", "dep:temp-env"]
+storage-s3 = ["dep:rust-s3", "dep:wiremock", "dep:temp-env"]
 storage-smb = []
 
 [patch.crates-io]

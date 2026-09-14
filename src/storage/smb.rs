@@ -35,6 +35,7 @@ use super::{Segment, StorageBackend, StorageError, StoredSegment, StoredSegmentI
 /// Writes segments to a local directory that is expected to be a mounted SMB
 /// share. All network-level concerns (reconnection, credentials, retries) are
 /// delegated to the OS kernel's CIFS client.
+#[derive(Debug)]
 pub struct SmbStorage {
     base_path: PathBuf,
 }

@@ -409,10 +409,16 @@ cargo build --release --features "ai"
 # GB 35114 A-level security (SM2 cert auth + keyed-SM3 integrity)
 cargo build --release --features "gb35114"
 
-# Remote segment-storage backends (S3 / WebDAV / SMB) — reserved: the
-# storage-s3 / storage-webdav / storage-smb feature flags exist but are not
-# wired up yet (missing optional deps); the recorder always writes locally
-# today. Do not enable them.
+# Remote segment-storage backends (WebDAV / S3 / SMB-mount) — compile-time
+# opt-in `StorageBackend` implementations. Pure-Rust TLS (rustls): safe for
+# the musl static cross-build, no OpenSSL linkage. Credentials come from
+# environment variables (WEBDAV_* / S3_* / SMB_MOUNT_PATH — see the module
+# docs in src/storage/). Note: the GB28181 recorder always writes local
+# disk; these backends serve integrations that consume the crate as a
+# library.
+cargo build --release --features "storage-webdav"
+cargo build --release --features "storage-s3"
+cargo build --release --features "storage-smb"
 
 # Reserved features — placeholders for planned capabilities (no-op today)
 cargo build --release --features "multi-camera,webrtc,h265"

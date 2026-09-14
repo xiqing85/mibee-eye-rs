@@ -28,6 +28,7 @@ pub struct StoredSegment {
 }
 
 /// Info for a stored segment.
+#[derive(Debug)]
 pub struct StoredSegmentInfo {
     pub id: String,
     pub path: String,

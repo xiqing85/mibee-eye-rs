@@ -342,7 +342,7 @@ mod tests {
     /// a real export never emits that, and tests must not either).
     fn silent_output(grid: &YoloxGrid) -> Vec<f32> {
         let mut output = vec![0.0f32; grid.num_points() * NUM_CHANNELS];
-        for row in output.chunks_exact_mut(NUM_CHANNELS) {
+        for row in output.as_chunks_mut::<NUM_CHANNELS>().0 {
             row[4] = -20.0;
         }
         output

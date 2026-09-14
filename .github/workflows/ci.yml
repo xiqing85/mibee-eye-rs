@@ -42,3 +42,22 @@ jobs:
 
       - name: Format check
         run: cargo fmt --check
+
+  # Every optional feature must stay compilable. The storage backends once
+  # rotted for months because CI only exercised default features.
+  all-features:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          components: clippy
+
+      - name: Clippy (all features, all targets)
+        run: cargo clippy --all-features --all-targets -- -D warnings
+
+      - name: Test (storage backends)
+        run: cargo test --features storage-webdav,storage-s3,storage-smb

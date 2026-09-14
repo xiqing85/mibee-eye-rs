@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use reqwest::Client;
+use std::fmt;
 use std::time::{Duration, SystemTime};
 use tokio::time::sleep;
 
@@ -25,6 +26,16 @@ pub struct WebdavStorage {
     base_url: String,
     username: String,
     password: String,
+}
+
+// Debug never includes the password.
+impl fmt::Debug for WebdavStorage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("WebdavStorage")
+            .field("base_url", &self.base_url)
+            .field("username", &self.username)
+            .finish_non_exhaustive()
+    }
 }
 
 impl WebdavStorage {
@@ -96,16 +107,15 @@ impl StorageBackend for WebdavStorage {
                     });
                 }
                 Ok(resp) => {
-                    last_err = Some(StorageError::Io(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("WebDAV PUT returned HTTP {}", resp.status()),
-                    )));
+                    last_err = Some(StorageError::Io(std::io::Error::other(format!(
+                        "WebDAV PUT returned HTTP {}",
+                        resp.status()
+                    ))));
                 }
                 Err(e) => {
-                    last_err = Some(StorageError::Io(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("WebDAV request failed: {e}"),
-                    )));
+                    last_err = Some(StorageError::Io(std::io::Error::other(format!(
+                        "WebDAV request failed: {e}"
+                    ))));
                 }
             }
 
@@ -115,10 +125,7 @@ impl StorageBackend for WebdavStorage {
         }
 
         Err(last_err.unwrap_or_else(|| {
-            StorageError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "WebDAV save failed after retries",
-            ))
+            StorageError::Io(std::io::Error::other("WebDAV save failed after retries"))
         }))
     }
 
@@ -144,7 +151,7 @@ impl StorageBackend for WebdavStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wiremock::matchers::{basic_auth, header, method, path};
+    use wiremock::matchers::{basic_auth, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn make_segment(data: &[u8], start: SystemTime, seq: u64) -> Segment {
@@ -207,7 +214,7 @@ mod tests {
         let mock_server = MockServer::start().await;
 
         Mock::given(method("PUT"))
-            .and(path("/dav/12345_00000.m4v"))
+            .and(path("/dav/12345000_00000.m4v"))
             .and(basic_auth("user", "pass"))
             .respond_with(ResponseTemplate::new(201))
             .mount(&mock_server)
@@ -232,16 +239,19 @@ mod tests {
     async fn save_retry_then_success() {
         let mock_server = MockServer::start().await;
 
-        // First respond with 503, then 201
+        // First respond with 503, then 201. `up_to_n_times` makes the 503
+        // mock stop matching after its single hit (expect() only verifies,
+        // it does not limit matching).
         Mock::given(method("PUT"))
-            .and(path("/dav/12345_00001.m4v"))
+            .and(path("/dav/12345000_00001.m4v"))
             .respond_with(ResponseTemplate::new(503))
+            .up_to_n_times(1)
             .expect(1)
             .mount(&mock_server)
             .await;
 
         Mock::given(method("PUT"))
-            .and(path("/dav/12345_00001.m4v"))
+            .and(path("/dav/12345000_00001.m4v"))
             .respond_with(ResponseTemplate::new(201))
             .expect(1)
             .mount(&mock_server)
@@ -268,7 +278,7 @@ mod tests {
 
         // Always return 500
         Mock::given(method("PUT"))
-            .and(path("/dav/12345_00002.m4v"))
+            .and(path("/dav/12345000_00002.m4v"))
             .respond_with(ResponseTemplate::new(500))
             .expect(3) // MAX_RETRIES
             .mount(&mock_server)
@@ -290,19 +300,15 @@ mod tests {
 
     #[tokio::test]
     async fn list_not_implemented() {
-        temp_env::with_vars(
+        let store = temp_env::with_vars(
             [
                 ("WEBDAV_URL", Some("http://localhost:9999/dav/")),
                 ("WEBDAV_USERNAME", Some("user")),
                 ("WEBDAV_PASSWORD", Some("pass")),
             ],
-            || -> Result<(), StorageError> {
-                let store = WebdavStorage::from_env()?;
-                let err = store.list().await.unwrap_err();
-                assert!(matches!(err, StorageError::Config(_)));
-                Ok(())
-            },
-        )
-        .unwrap();
+            || WebdavStorage::from_env().unwrap(),
+        );
+        let err = store.list().await.unwrap_err();
+        assert!(matches!(err, StorageError::Config(_)));
     }
 }
