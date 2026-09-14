@@ -4,6 +4,8 @@ Notable changes to MiBee Eye (Rust implementation) are documented here.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-09-14
+
 - **`storage-webdav` / `storage-s3` / `storage-smb` features wired up** —
   the three `StorageBackend` implementations compiled behind these flags
   referenced crates that were never declared in `Cargo.toml`, so enabling
