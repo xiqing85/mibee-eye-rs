@@ -37,9 +37,10 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 # stdout logging for the protocol libraries (they use the `log` facade)
 env_logger = "0.11"
 # GB/T 28181 device stack (extracted library)
-# Pinned to the main fix for ILP32 tm_gmtoff (issue #55, merged as #56,
-# unreleased upstream) until the next gb28181-rs capability package ships.
-gb28181-rs = { git = "https://github.com/mickeyzzc/gb28181-rs", rev = "fc049b8" }
+# Pinned to unreleased upstream main ahead of the next capability package:
+# f773eb5 = ILP32 tm_gmtoff fix (#56) + DeviceControl sub-command decode &
+# host seam (#58, mibee-eye v0.3.0). Re-point at crates.io when they ship.
+gb28181-rs = { git = "https://github.com/mickeyzzc/gb28181-rs", rev = "f773eb5" }
 # ONVIF Device stack (extracted library)
 onvif-device-rs = "0.6.0"
 anyhow = "1"
