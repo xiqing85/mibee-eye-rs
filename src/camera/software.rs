@@ -317,7 +317,12 @@ mod tests {
     }
 
     fn cfg(w: u32, h: u32) -> CameraConfig {
-        CameraConfig::new(w, h, 500_000)
+        // Software encoding has no device node; a placeholder satisfies
+        // validate()'s non-empty device_path contract.
+        CameraConfig {
+            device_path: "/dev/null".to_string(),
+            ..CameraConfig::new(w, h, 500_000)
+        }
     }
 
     #[tokio::test]

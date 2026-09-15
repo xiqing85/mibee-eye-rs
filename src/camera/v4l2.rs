@@ -516,7 +516,10 @@ mod tests {
     #[test]
     fn test_v4l2_source_new() {
         let producer = MockFrameProducer::new(vec![vec![0u8; 100]]);
-        let config = CameraConfig::new(640, 480, 1_000_000);
+        let config = CameraConfig {
+            device_path: "/dev/video11".to_string(),
+            ..CameraConfig::new(640, 480, 1_000_000)
+        };
         let source = V4l2CameraSource::new(config, producer);
         assert_eq!(source.device_info().driver, "bcm2835-codec");
         assert_eq!(source.device_info().device_path, "/dev/video11");
@@ -529,7 +532,10 @@ mod tests {
     #[test]
     fn test_v4l2_source_with_backoff() {
         let producer = MockFrameProducer::new(vec![vec![0u8; 100]]);
-        let config = CameraConfig::new(640, 480, 1_000_000);
+        let config = CameraConfig {
+            device_path: "/dev/video11".to_string(),
+            ..CameraConfig::new(640, 480, 1_000_000)
+        };
         let backoff = BackoffConfig {
             initial: Duration::from_millis(100),
             max: Duration::from_secs(5),
@@ -599,7 +605,10 @@ mod tests {
 
     #[test]
     fn test_build_encoder_config() {
-        let config = CameraConfig::new(1920, 1080, 4_000_000);
+        let config = CameraConfig {
+            device_path: "/dev/video11".to_string(),
+            ..CameraConfig::new(1920, 1080, 4_000_000)
+        };
         let enc = V4l2CameraSource::<MockFrameProducer>::static_build_encoder_config(&config);
         assert_eq!(enc.width, 1920);
         assert_eq!(enc.height, 1080);
@@ -641,7 +650,10 @@ mod tests {
     #[ignore = "requires V4L2 M2M device (/dev/video11) — aarch64 only"]
     async fn test_v4l2_source_start_stop() {
         let producer = MockFrameProducer::new(vec![vec![0u8; 640 * 480 * 3 / 2]; 5]);
-        let config = CameraConfig::new(640, 480, 1_000_000);
+        let config = CameraConfig {
+            device_path: "/dev/video11".to_string(),
+            ..CameraConfig::new(640, 480, 1_000_000)
+        };
         let mut source = V4l2CameraSource::new(config, producer);
 
         // On real hardware this should succeed.

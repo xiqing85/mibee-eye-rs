@@ -173,7 +173,10 @@ impl CameraConfig {
             height,
             fps: 30,
             bitrate_bps,
-            device_path: "/dev/video11".to_string(),
+            // No invented device default: production wiring sets this from
+            // the app config (camera.device / camera.encoder_device);
+            // validate() rejects an empty path before any hardware use.
+            device_path: String::new(),
             profile: H264Profile::default(),
             level: H264Level::default(),
             i_period: 30,
@@ -349,8 +352,15 @@ mod tests {
         assert_eq!(cfg.height, 1080);
         assert_eq!(cfg.bitrate_bps, 4_000_000);
         assert_eq!(cfg.fps, 30);
-        assert_eq!(cfg.device_path, "/dev/video11");
-        assert_eq!(cfg.profile, H264Profile::High);
+        // No invented device default: callers wire the configured device
+        // node; an empty path is rejected by validate().
+        assert_eq!(cfg.device_path, "");
+        assert!(
+            cfg.validate().is_err(),
+            "empty device_path must be rejected"
+        );
+        let mut cfg = cfg;
+        cfg.device_path = "/dev/video11".to_string();
         assert!(cfg.validate().is_ok());
     }
 

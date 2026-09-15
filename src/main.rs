@@ -833,7 +833,9 @@ fn resolve_config_path() -> String {
 fn detect_local_ip() -> String {
     std::net::UdpSocket::bind("0.0.0.0:0")
         .and_then(|s| {
-            s.connect("8.8.8.8:80")?;
+            // UDP-connect probe target for local-IP detection (no packets
+            // are sent); not a deployment address.
+            s.connect("8.8.8.8:80")?; // hardcode-ok: local-IP probe, never sends
             s.local_addr().map(|a| a.ip().to_string())
         })
         .unwrap_or_else(|_| "127.0.0.1".to_string())

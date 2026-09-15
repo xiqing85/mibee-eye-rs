@@ -17,6 +17,15 @@ jobs:
       - name: Repo hygiene gate (junk/secret files must not be tracked)
         run: tools/check-repo-hygiene.sh
 
+  hardcode:
+    # 硬编码门禁（2026-09-15 规范）：应配置化的值不得硬编码——设备路径、
+    # IP、版本串、国标 ID、外部可执行名；默认值只在配置模块声明。
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Hardcoded-value gate (values must be configurable)
+        run: tools/check-hardcode.sh
+
   check:
     runs-on: ubuntu-latest
     strategy:
