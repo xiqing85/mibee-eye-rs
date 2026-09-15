@@ -132,7 +132,17 @@ impl Segment {
 /// write failures (e.g. disk full) are logged and stop recording cleanly
 /// without panicking or killing the process.
 pub async fn run(hub: Arc<AuHub>, config: RecordingConfig) -> anyhow::Result<()> {
-    run_inner(hub, config, None).await
+    run_inner(hub, config, None, None).await
+}
+
+/// Like [`run`], but a shared pause gate drops frames while set (GB
+/// `DeviceControl(RecordCmd StopRecord)` wiring; `Record` clears it).
+pub async fn run_gated(
+    hub: Arc<AuHub>,
+    config: RecordingConfig,
+    pause: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> anyhow::Result<()> {
+    run_inner(hub, config, None, Some(pause)).await
 }
 
 /// Like [`run`], but stops when `shutdown` fires (used by tests).
@@ -140,6 +150,7 @@ async fn run_inner(
     hub: Arc<AuHub>,
     config: RecordingConfig,
     mut shutdown: Option<tokio::sync::oneshot::Receiver<()>>,
+    pause: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> anyhow::Result<()> {
     let root = PathBuf::from(&config.storage_path);
     fs::create_dir_all(&root).map_err(|e| {
@@ -204,6 +215,16 @@ async fn run_inner(
         };
 
         let Some(au) = au else { break };
+
+        // Platform-requested pause (GB RecordCmd StopRecord): drop frames
+        // while paused — the next platform Record resumes writing at a
+        // fresh segment boundary.
+        if pause
+            .as_ref()
+            .is_some_and(|p| p.load(std::sync::atomic::Ordering::Relaxed))
+        {
+            continue;
+        }
 
         let now = SystemTime::now();
         let now_ms = epoch_ms(now);
@@ -442,7 +463,7 @@ mod tests {
                 .enable_all()
                 .build()
                 .unwrap();
-            rt.block_on(run_inner(hub_w, cfg, Some(shutdown_rx)))
+            rt.block_on(run_inner(hub_w, cfg, Some(shutdown_rx), None))
         });
 
         // Wait until the writer has subscribed so the writes below are not
@@ -514,7 +535,7 @@ mod tests {
                 .enable_all()
                 .build()
                 .unwrap();
-            rt.block_on(run_inner(hub_w, cfg, Some(shutdown_rx)))
+            rt.block_on(run_inner(hub_w, cfg, Some(shutdown_rx), None))
         });
 
         // Wait until the writer has subscribed so the writes below are not
@@ -538,5 +559,53 @@ mod tests {
         // Only the IDR frame was recorded (non-IDR before it dropped).
         assert_eq!(all[0].frames, 1);
         assert_eq!(all[0].keyframes, 1);
+    }
+
+    /// RecordCmd semantics: frames are dropped while the gate is set and
+    /// writing resumes with the next IDR when cleared.
+    #[test]
+    fn test_pause_gate_drops_frames_until_resumed() {
+        let dir = temp_dir();
+        let root = dir.join("rec");
+        fs::create_dir_all(&root).unwrap();
+
+        let hub = Arc::new(AuHub::new());
+        let config = RecordingConfig {
+            enabled: true,
+            storage_path: root.to_string_lossy().to_string(),
+            segment_secs: 600,
+            retention_days: 3,
+            max_storage_mb: 8192,
+        };
+        let pause = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+
+        let hub_w = Arc::clone(&hub);
+        let cfg_w = config.clone();
+        let pause_w = Arc::clone(&pause);
+        let handle = std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("rt");
+            rt.block_on(run_inner(hub_w, cfg_w, Some(shutdown_rx), Some(pause_w)))
+        });
+
+        // Paused: the IDR is dropped.
+        hub.write(au(true, vec![nalu(5, vec![0x65])]));
+        std::thread::sleep(std::time::Duration::from_millis(150));
+
+        // Unpause (platform Record): the next IDR lands.
+        pause.store(false, std::sync::atomic::Ordering::Relaxed);
+        hub.write(au(true, vec![nalu(5, vec![0x65])]));
+        std::thread::sleep(std::time::Duration::from_millis(300));
+
+        let _ = shutdown_tx.send(());
+        let result = handle.join().unwrap();
+        assert!(result.is_ok());
+
+        // Exactly one segment (the paused IDR never became one).
+        let index = RecordingIndex::load(&index_path(&root));
+        assert_eq!(index.all().len(), 1, "paused IDR must not create a segment");
     }
 }

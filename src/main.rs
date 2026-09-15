@@ -171,6 +171,9 @@ async fn main() {
     // On-demand IDR request shared with the camera encoder threads
     // (raised by DeviceControl IFrameCmd Send, consumed per frame).
     let idr_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    // GB RecordCmd runtime gate: StopRecord pauses segment writing,
+    // Record resumes (platform-requested manual recording).
+    let rec_pause = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
     // --- Start RTSP server ---
     let rtsp_config = RtspConfig {
@@ -546,6 +549,8 @@ async fn main() {
             let snapshot_yuv = latest_yuv
                 .clone()
                 .unwrap_or_else(|| Arc::new(std::sync::Mutex::new(None)));
+            let rec_pause_gb = Arc::clone(&rec_pause);
+            let recording_enabled_gb = config.recording.enabled;
             tokio::spawn(async move {
                 loop {
                     // At boot the interface may still be coming up ("Network
@@ -572,9 +577,11 @@ async fn main() {
                                         .unwrap_or_else(|| Arc::new(Default::default())),
                                 },
                             )))
-                            .with_control_handler(Some(Arc::new(ForceIframeControl(Arc::clone(
-                                &idr_flag,
-                            )))))
+                            .with_control_handler(Some(Arc::new(ControlGlue {
+                                idr_flag: Arc::clone(&idr_flag),
+                                rec_pause: Arc::clone(&rec_pause_gb),
+                                recording_enabled: recording_enabled_gb,
+                            })))
                             .with_position_source(static_position.clone());
                             // Hand the live notifier to the alarm bridge
                             // before the task owns the server.
@@ -604,6 +611,7 @@ async fn main() {
     if config.recording.enabled {
         if let Some(rec_hub) = au_hub.clone() {
             let rec_config = config.recording.clone();
+            let rec_pause_gate = Arc::clone(&rec_pause);
             println!(
                 "recording: enabled, root={} segment_secs={} retention_days={} max_storage_mb={}",
                 rec_config.storage_path,
@@ -626,8 +634,12 @@ async fn main() {
                         "recording: clock not NTP-synced after 120s — starting anyway (timestamps may be skewed)"
                     );
                 }
-                if let Err(e) =
-                    mibee_eye_raspi_rs::recording::writer::run(rec_hub, rec_config).await
+                if let Err(e) = mibee_eye_raspi_rs::recording::writer::run_gated(
+                    rec_hub,
+                    rec_config,
+                    rec_pause_gate,
+                )
+                .await
                 {
                     eprintln!("recording: {e}");
                 }
@@ -694,11 +706,33 @@ async fn main() {
 /// family (library semantics — no-op methods ack-only). PTZ commands
 /// have no motor to drive on this hardware and TeleBoot stays a logged
 /// no-op.
-struct ForceIframeControl(Arc<std::sync::atomic::AtomicBool>);
+struct ControlGlue {
+    idr_flag: Arc<std::sync::atomic::AtomicBool>,
+    rec_pause: Arc<std::sync::atomic::AtomicBool>,
+    recording_enabled: bool,
+}
 
-impl mibee_eye_raspi_rs::gb28181::server::DeviceControlHandler for ForceIframeControl {
+impl mibee_eye_raspi_rs::gb28181::server::DeviceControlHandler for ControlGlue {
     fn on_force_iframe(&self) {
-        mibee_eye_raspi_rs::camera::raise_idr_request(&self.0);
+        mibee_eye_raspi_rs::camera::raise_idr_request(&self.idr_flag);
+    }
+
+    /// GB/T 28181 RecordCmd (§9.3.2): platform-requested manual
+    /// recording. StopRecord pauses the (config-enabled) recorder's
+    /// segment writing; Record resumes it at a fresh segment boundary.
+    /// With recording disabled in config there is no writer to gate —
+    /// logged, not silently ignored.
+    fn on_record(&self, start: bool) {
+        if !self.recording_enabled {
+            eprintln!("gb28181: RecordCmd ignored — recording disabled in config");
+            return;
+        }
+        self.rec_pause
+            .store(!start, std::sync::atomic::Ordering::Relaxed);
+        println!(
+            "gb28181: RecordCmd — recording {}",
+            if start { "resumed" } else { "paused" }
+        );
     }
 }
 
