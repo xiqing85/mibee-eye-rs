@@ -49,15 +49,20 @@ failing test that reproduces the bug first.
 
 ## Release Cadence
 
-Releases are **synchronized across both MiBee Eye implementations**
+Releases follow a split rule across the two MiBee Eye implementations
 ([mibee-eye-rs](https://github.com/xiqing85/mibee-eye-rs) and
-[mibee-eye-go](https://github.com/xiqing85/mibee-eye-go)): same version
-number, same day, cross-linked bilingual release notes. **One repo never
-releases alone** — including patches: if only one implementation is
-affected, both still tag the same patch version, each changelog stating
-its own content. A capability ships only when both implementations are
-ready; if one lags, the release waits. See
-[docs/roadmap-v0.3.0.md](docs/roadmap-v0.3.0.md) for the current
+[mibee-eye-go](https://github.com/xiqing85/mibee-eye-go)):
+
+- **Minor releases (x.y.0, capability packages) are synchronized**: same
+  version number, same day, cross-linked bilingual release notes. A
+  capability ships only when both implementations are ready; if one lags,
+  the release waits. New features never ship in a patch.
+- **Patch releases (x.y.z > 0, fixes only) are independent**: either repo
+  may publish its own patch with its own number (mibee-eye-go can be at
+  0.2.1 while mibee-eye-rs is at 0.2.3) — no lockstep for bug, security
+  or regression fixes.
+
+See [docs/roadmap-v0.3.0.md](docs/roadmap-v0.3.0.md) for the current
 synchronized capability package.
 
 ## Issue Tracker

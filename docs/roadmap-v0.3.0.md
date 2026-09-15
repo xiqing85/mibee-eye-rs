@@ -3,10 +3,11 @@
 > **状态**：范围冻结（2026-09-15）。本文是 v0.3.0 的唯一范围真源（两实现同文）。
 >
 > **同步发布规范**：MiBee Eye 的两个实现（[mibee-eye-rs](https://github.com/xiqing85/mibee-eye-rs)
-> 与 [mibee-eye-go](https://github.com/xiqing85/mibee-eye-go)）**标签一律同步发布**——
-> 同版本号、同日打 tag、发布说明互链；**禁止单仓单独发版**（含 patch：即使只有
-> 一侧受影响，两仓也同号各发 patch，各自 changelog 注明内容）。一方能力不齐则
-> 整体推迟。此前单发的 rs v0.3.0 已按此规范删除，版本号留给本次同步版本。
+> 与 [mibee-eye-go](https://github.com/xiqing85/mibee-eye-go)）**minor 版本
+> （x.y.0，能力包）一律同步发布**——同版本号、同日打 tag、发布说明互链；一方能力
+> 不齐则整体推迟，新能力只随同步的 minor 出货。**patch 版本（x.y.z，仅修复）放开**：
+> 两仓可各自独立发布、版本号不必对齐（go 可在 0.2.1 时 rs 停在 0.2.3）。
+> 此前单发的 rs v0.3.0 已按此规范删除，版本号留给本次同步版本。
 
 ## 目标
 

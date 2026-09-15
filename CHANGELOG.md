@@ -2,13 +2,15 @@
 
 Notable changes to MiBee Eye (Rust implementation) are documented here.
 
-> **Releases are synchronized** with the Go implementation
-> ([mibee-eye-go](https://github.com/xiqing85/mibee-eye-go)): same version
-> number, same day, cross-linked release notes — never one repo alone. A
-> v0.3.0 tag published on 2026-09-14 for this repo alone was deleted the
-> same week before the synchronized release; everything below `Unreleased`
-> ships with the synchronized v0.3.0 (headline scope: complete GB/T
-> 28181-2022 device-role coverage — see
+> **Release cadence** — minor versions (x.y.0, capability packages) are
+> synchronized with the Go implementation
+> ([mibee-eye-go](https://github.com/xiqing85/mibee-eye-go)): same
+> version number, same day, cross-linked notes. Patch versions (fixes
+> only) are independent — either repo may publish its own patch number.
+> A v0.3.0 tag published on 2026-09-14 for this repo alone was deleted
+> the same week; everything below `Unreleased` ships with the
+> synchronized v0.3.0 (headline scope: complete GB/T 28181-2022
+> device-role coverage — see
 > [docs/roadmap-v0.3.0.md](docs/roadmap-v0.3.0.md)).
 
 ## [Unreleased]
