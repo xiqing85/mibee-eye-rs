@@ -2,6 +2,7 @@ pub mod ai;
 pub mod camera;
 pub mod config;
 pub mod features;
+pub mod gb28181_alarm;
 pub mod gb28181_snapshot;
 pub mod gb35114_glue;
 // GB/T 28181 device stack lives in the `gb28181-rs` crate; re-exported under

@@ -482,6 +482,38 @@ async fn main() {
                     std::process::exit(1);
                 }
             };
+            // AI detections → alarm NOTIFY (§9.5): the bridge is shared
+            // with the DeviceConfig(AlarmReport) gate; the server retry
+            // loop hands each new notifier instance in.
+            let alarm_bridge = Arc::new(mibee_eye_raspi_rs::gb28181_alarm::AlarmBridge::new(
+                config.gb28181.alarm_notify_enabled,
+                Duration::from_secs(config.gb28181.alarm_cooldown_secs),
+            ));
+            if let Some(bus) = ai_event_bus.clone() {
+                let bridge = Arc::clone(&alarm_bridge);
+                tokio::spawn(async move {
+                    let mut rx = bus.subscribe();
+                    loop {
+                        match rx.recv().await {
+                            Ok(mibee_eye_raspi_rs::pipeline::bus::PipelineEvent::AiDetection {
+                                detections,
+                                ..
+                            }) => {
+                                let now_ms = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .map(|d| d.as_millis() as u64)
+                                    .unwrap_or(0);
+                                bridge.on_detections(now_ms, detections.len());
+                            }
+                            // Lagged batches are fine — the next one
+                            // carries fresh state.
+                            Ok(_) => {}
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                            Err(_) => break,
+                        }
+                    }
+                });
+            }
             println!("gb28181: starting on port {}", gb_config.local_sip_port);
             // Snapshot executor input: the same shared latest-YUV slot
             // the /snapshot endpoint serves (an empty slot when the
@@ -496,7 +528,7 @@ async fn main() {
                     // abandoning the protocol task until the next restart.
                     let server = retry_start(
                         || async {
-                            match Gb28181Server::with_recording_index(
+                            let built = Gb28181Server::with_recording_index(
                                 gb_config.lib.clone(),
                                 Arc::new(AuHubFrameSource(gb_hub.clone(), observe.clone())),
                                 rec_source.clone(),
@@ -507,9 +539,15 @@ async fn main() {
                                     latest_yuv: snapshot_yuv.clone(),
                                 },
                             )))
-                            .spawn()
-                            .await
-                            {
+                            .with_config_handler(Some(Arc::new(
+                                mibee_eye_raspi_rs::gb28181_alarm::AlarmReportGate(Arc::clone(
+                                    &alarm_bridge,
+                                )),
+                            )));
+                            // Hand the live notifier to the alarm bridge
+                            // before the task owns the server.
+                            alarm_bridge.update_notifier(Some(built.notifier()));
+                            match built.spawn().await {
                                 Ok(handle) => Some(handle),
                                 Err(e) => {
                                     eprintln!("gb28181: {e} — retrying");

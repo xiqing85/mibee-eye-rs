@@ -122,6 +122,16 @@ password = ""  # <-- set this!
 # type: boolean  |  default: false  |  env: MIBEE_EYE_GB28181_ENABLED
 enabled = false
 
+# Forward AI detections as alarm NOTIFYs while a platform holds an Alarm
+# subscription (rising-edge only). DeviceConfig(AlarmReport) gates this
+# at runtime; this is the boot default.
+# type: boolean  |  default: true
+#alarm_notify_enabled = true
+
+# Minimum seconds between AI alarm NOTIFYs (anti-storm)
+# type: integer  |  default: 30
+#alarm_cooldown_secs = 30
+
 # GB28181 platform SIP server address
 # type: string  |  default: "192.168.1.1"  |  env: MIBEE_EYE_GB28181_PLATFORM_SIP_ADDRESS
 platform_sip_address = "192.168.1.1"

@@ -258,7 +258,7 @@ pub struct ONVIFConfig {
 // `Deref` keeps plain field access (`config.gb28181.device_id`) working.
 pub use gb28181_rs::config::Transport;
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Gb28181Config {
     #[serde(flatten)]
     pub lib: gb28181_rs::config::Gb28181Config,
@@ -266,6 +266,35 @@ pub struct Gb28181Config {
     /// feature and pre-provisioned SM2 certificates).
     #[serde(default)]
     pub gb35114: Gb35114Config,
+    /// Forward AI detections as GB/T 28181 alarm NOTIFYs (method 5 视频
+    /// 报警, type 2 运动目标检测) while a platform holds an Alarm
+    /// subscription. The platform's DeviceConfig(AlarmReport) switch
+    /// gates it at runtime; this is the boot default (on).
+    #[serde(default = "default_alarm_notify_enabled")]
+    pub alarm_notify_enabled: bool,
+    /// Minimum seconds between AI alarm NOTIFYs (rising-edge anti-storm;
+    /// see `gb28181_alarm::DEFAULT_ALARM_COOLDOWN_SECS`).
+    #[serde(default = "default_alarm_cooldown_secs")]
+    pub alarm_cooldown_secs: u64,
+}
+
+fn default_alarm_notify_enabled() -> bool {
+    true
+}
+
+fn default_alarm_cooldown_secs() -> u64 {
+    crate::gb28181_alarm::DEFAULT_ALARM_COOLDOWN_SECS
+}
+
+impl Default for Gb28181Config {
+    fn default() -> Self {
+        Self {
+            lib: Default::default(),
+            gb35114: Default::default(),
+            alarm_notify_enabled: default_alarm_notify_enabled(),
+            alarm_cooldown_secs: default_alarm_cooldown_secs(),
+        }
+    }
 }
 
 impl std::ops::Deref for Gb28181Config {
