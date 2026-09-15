@@ -168,6 +168,10 @@ async fn main() {
 
     let device_ip = detect_local_ip();
 
+    // On-demand IDR request shared with the camera encoder threads
+    // (raised by DeviceControl IFrameCmd Send, consumed per frame).
+    let idr_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
     // --- Start RTSP server ---
     let rtsp_config = RtspConfig {
         port: config.rtsp.port,
@@ -191,7 +195,8 @@ async fn main() {
                 }
             });
 
-            latest_yuv = start_camera_pipeline(&config, au_hub_internal).await;
+            latest_yuv =
+                start_camera_pipeline(&config, au_hub_internal, Arc::clone(&idr_flag)).await;
         }
         Err(e) => eprintln!("rtsp: failed to bind :{} â {e}", config.rtsp.port),
     }
@@ -543,7 +548,10 @@ async fn main() {
                                 mibee_eye_raspi_rs::gb28181_alarm::AlarmReportGate(Arc::clone(
                                     &alarm_bridge,
                                 )),
-                            )));
+                            )))
+                            .with_control_handler(Some(Arc::new(ForceIframeControl(Arc::clone(
+                                &idr_flag,
+                            )))));
                             // Hand the live notifier to the alarm bridge
                             // before the task owns the server.
                             alarm_bridge.update_notifier(Some(built.notifier()));
@@ -650,6 +658,27 @@ async fn main() {
 // ---------------------------------------------------------------------------
 // AI â WebSocket bridge
 // ---------------------------------------------------------------------------
+// GB DeviceControl: force IDR
+// ---------------------------------------------------------------------------
+
+/// `DeviceControl(IFrameCmd Send)` (§9.3.2): raise the on-demand IDR
+/// flag the camera encoder threads consume before the next frame.
+/// Platforms send this when starting a pull or after loss — answering it
+/// cuts the platform's wait from up to one GOP (2s) to one frame.
+///
+/// Note: installing a control handler accepts the whole DeviceControl
+/// family (library semantics — no-op methods ack-only). PTZ commands
+/// have no motor to drive on this hardware and TeleBoot stays a logged
+/// no-op.
+struct ForceIframeControl(Arc<std::sync::atomic::AtomicBool>);
+
+impl mibee_eye_raspi_rs::gb28181::server::DeviceControlHandler for ForceIframeControl {
+    fn on_force_iframe(&self) {
+        mibee_eye_raspi_rs::camera::raise_idr_request(&self.0);
+    }
+}
+
+// ---------------------------------------------------------------------------
 
 /// Spawn the singleton EventBus â WsHub bridge task (T7).
 ///
@@ -698,6 +727,7 @@ fn spawn_ai_event_bridge(event_bus: Option<EventBus>) {
 async fn start_camera_pipeline(
     config: &Config,
     au_hub: Arc<mibee_eye_raspi_rs::h264::hub::AuHub>,
+    idr_flag: Arc<std::sync::atomic::AtomicBool>,
 ) -> Option<mibee_eye_raspi_rs::camera::v4l2_capture::LatestYuv> {
     let device = config.camera.device.clone();
     let width = config.camera.width;
@@ -773,7 +803,7 @@ async fn start_camera_pipeline(
         SelectedEncoder::Hardware => {
             #[cfg(feature = "v4l2-encoder")]
             {
-                Box::new(V4l2CameraSource::new(camera_config, producer))
+                Box::new(V4l2CameraSource::new(camera_config, producer).with_idr_flag(idr_flag))
             }
             // decide() never selects Hardware when the feature is off.
             #[cfg(not(feature = "v4l2-encoder"))]
@@ -784,7 +814,7 @@ async fn start_camera_pipeline(
         SelectedEncoder::Software => {
             #[cfg(feature = "software-encoder")]
             {
-                Box::new(SoftwareCameraSource::new(camera_config, producer))
+                Box::new(SoftwareCameraSource::new(camera_config, producer).with_idr_flag(idr_flag))
             }
             #[cfg(not(feature = "software-encoder"))]
             {

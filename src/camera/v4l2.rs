@@ -105,6 +105,9 @@ pub struct V4l2CameraSource<P: FrameProducer> {
     state: Option<RunningState>,
     device_info: DeviceInfo,
     backoff: BackoffConfig,
+    /// On-demand IDR request (`DeviceControl IFrameCmd Send`), consumed
+    /// by the encoder thread before each encode.
+    idr_flag: Arc<AtomicBool>,
 }
 
 // Private runtime state kept alive while the encoder is running.
@@ -143,7 +146,16 @@ impl<P: FrameProducer> V4l2CameraSource<P> {
             state: None,
             device_info,
             backoff: BackoffConfig::default(),
+            idr_flag: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Shares the on-demand IDR request flag with the encoder thread
+    /// (`DeviceControl IFrameCmd Send` wiring).
+    #[must_use]
+    pub fn with_idr_flag(mut self, flag: Arc<AtomicBool>) -> Self {
+        self.idr_flag = flag;
+        self
     }
 
     /// Override the reconnection backoff configuration.
@@ -167,6 +179,7 @@ impl<P: FrameProducer> V4l2CameraSource<P> {
         frame_tx: tokio::sync::mpsc::Sender<EncodedEvent>,
         stop: Arc<AtomicBool>,
         backoff: BackoffConfig,
+        idr_flag: Arc<AtomicBool>,
     ) {
         let mut current_backoff = backoff.initial;
 
@@ -236,8 +249,11 @@ impl<P: FrameProducer> V4l2CameraSource<P> {
                     }
                 }
 
-                // Force a keyframe every i_period frames for NVR stability.
-                let force_kf = frame_counter == 0 || frame_counter.is_multiple_of(config.i_period);
+                // Force a keyframe every i_period frames for NVR stability,
+                // or on demand (DeviceControl IFrameCmd Send).
+                let force_kf = frame_counter == 0
+                    || frame_counter.is_multiple_of(config.i_period)
+                    || super::consume_idr_request(&idr_flag);
                 frame_counter = frame_counter.wrapping_add(1);
 
                 // Throttling detection: prefer firmware interface, fall back to cpufreq.
@@ -360,12 +376,13 @@ impl<P: FrameProducer + Send + Sync> CameraSource for V4l2CameraSource<P> {
         let stop_clone = stop.clone();
         let config = self.config.clone();
         let backoff = self.backoff.clone();
+        let idr_flag = Arc::clone(&self.idr_flag);
 
         // --- Spawn the encoder thread ---
         let handle = std::thread::Builder::new()
             .name("v4l2-encoder".into())
             .spawn(move || {
-                Self::encoder_thread(config, producer, frame_tx, stop_clone, backoff);
+                Self::encoder_thread(config, producer, frame_tx, stop_clone, backoff, idr_flag);
             })
             .map_err(CameraError::Io)?;
 

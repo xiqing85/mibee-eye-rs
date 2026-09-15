@@ -43,6 +43,9 @@ pub struct SoftwareCameraSource<P: FrameProducer + Sync> {
     producer: Option<P>,
     state: Option<RunningState>,
     device_info: DeviceInfo,
+    /// On-demand IDR request (`DeviceControl IFrameCmd Send`), consumed
+    /// before each encode.
+    idr_flag: Arc<std::sync::atomic::AtomicBool>,
 }
 
 struct RunningState {
@@ -74,7 +77,16 @@ impl<P: FrameProducer + Sync> SoftwareCameraSource<P> {
             producer: Some(producer),
             state: None,
             device_info,
+            idr_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
+    }
+
+    /// Shares the on-demand IDR request flag with the encoder thread
+    /// (`DeviceControl IFrameCmd Send` wiring).
+    #[must_use]
+    pub fn with_idr_flag(mut self, flag: Arc<std::sync::atomic::AtomicBool>) -> Self {
+        self.idr_flag = flag;
+        self
     }
 
     fn build_encoder_config(config: &CameraConfig) -> EncoderConfig {
@@ -104,6 +116,7 @@ impl<P: FrameProducer + Sync> CameraSource for SoftwareCameraSource<P> {
         let width = self.config.width;
         let height = self.config.height;
         let stop_flag = Arc::clone(&stop);
+        let idr_flag = Arc::clone(&self.idr_flag);
 
         let handle = thread::Builder::new()
             .name("openh264-encoder".into())
@@ -137,6 +150,10 @@ impl<P: FrameProducer + Sync> CameraSource for SoftwareCameraSource<P> {
                         }
                     };
 
+                    // On-demand IDR (DeviceControl IFrameCmd Send).
+                    if super::consume_idr_request(&idr_flag) {
+                        encoder.force_intra_frame();
+                    }
                     let view = I420View::new(&raw, width as usize, height as usize);
                     match encoder.encode(&view) {
                         Ok(bitstream) => {
