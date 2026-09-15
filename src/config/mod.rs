@@ -276,6 +276,14 @@ pub struct Gb28181Config {
     /// see `gb28181_alarm::DEFAULT_ALARM_COOLDOWN_SECS`).
     #[serde(default = "default_alarm_cooldown_secs")]
     pub alarm_cooldown_secs: u64,
+    /// Surveyed coordinates reported as MobilePosition NOTIFYs while a
+    /// platform holds a position subscription (GB 度分秒 string form,
+    /// e.g. "1163942.55E" / "395436.30N"; carried verbatim). Both keys
+    /// must be set to install the position source.
+    #[serde(default)]
+    pub longitude: String,
+    #[serde(default)]
+    pub latitude: String,
 }
 
 fn default_alarm_notify_enabled() -> bool {
@@ -293,6 +301,8 @@ impl Default for Gb28181Config {
             gb35114: Default::default(),
             alarm_notify_enabled: default_alarm_notify_enabled(),
             alarm_cooldown_secs: default_alarm_cooldown_secs(),
+            longitude: String::new(),
+            latitude: String::new(),
         }
     }
 }

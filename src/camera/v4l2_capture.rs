@@ -341,9 +341,9 @@ pub struct V4l2CaptureProducer {
     yuv_share_interval: u32,
     frame_counter: u64,
     /// Device-level flips applied to every captured frame before it is
-    /// shared with the encoder / snapshots / AI.
-    hflip: bool,
-    vflip: bool,
+    /// shared with the encoder / snapshots / AI. Atomic so the GB
+    /// FrameMirror control (A.2.3.2.9) can change them at runtime.
+    flips: Arc<Flips>,
     /// Video watermark (SPEC §5.2) burned into every frame after the flips —
     /// same "baked into everything downstream" semantics.
     watermark: Option<crate::watermark::Watermark>,
@@ -353,6 +353,33 @@ struct Inner {
     fd: OwnedFd,
     buffers: Vec<(usize, u32)>, // (mmap ptr, length)
     streaming: bool,
+}
+
+/// Device-level flip flags shared between the capture thread (reader,
+/// per frame) and runtime control writers (GB FrameMirror).
+#[derive(Debug, Default)]
+pub struct Flips {
+    hflip: std::sync::atomic::AtomicBool,
+    vflip: std::sync::atomic::AtomicBool,
+}
+
+impl Flips {
+    /// Update both flags (relaxed — per-frame reads tolerate tearing on
+    /// the exact transition frame).
+    pub fn set(&self, hflip: bool, vflip: bool) {
+        self.hflip
+            .store(hflip, std::sync::atomic::Ordering::Relaxed);
+        self.vflip
+            .store(vflip, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Read both flags.
+    pub fn load(&self) -> (bool, bool) {
+        (
+            self.hflip.load(std::sync::atomic::Ordering::Relaxed),
+            self.vflip.load(std::sync::atomic::Ordering::Relaxed),
+        )
+    }
 }
 
 impl V4l2CaptureProducer {
@@ -369,8 +396,7 @@ impl V4l2CaptureProducer {
             latest_yuv: Arc::new(std::sync::Mutex::new(None)),
             yuv_share_interval: 15,
             frame_counter: 0,
-            hflip: false,
-            vflip: false,
+            flips: Arc::new(Flips::default()),
             watermark: None,
         }
     }
@@ -380,8 +406,14 @@ impl V4l2CaptureProducer {
     /// Must be called before the first [`FrameProducer::next_yuv_frame`] —
     /// the flags are read on the capture thread for each dequeued buffer.
     pub fn set_flips(&mut self, hflip: bool, vflip: bool) {
-        self.hflip = hflip;
-        self.vflip = vflip;
+        self.flips.set(hflip, vflip);
+    }
+
+    /// The shared flip flags — a live handle for runtime changes (GB
+    /// FrameMirror control wiring); the capture thread reads them every
+    /// frame.
+    pub fn flips_arc(&self) -> Arc<Flips> {
+        Arc::clone(&self.flips)
     }
 
     /// Attach a watermark renderer (applied to every frame from here on,
@@ -586,13 +618,14 @@ impl FrameProducer for V4l2CaptureProducer {
             // Device-level flip: baked into everything downstream of the
             // producer — encoder (RTSP/ONVIF/GB28181/recordings), web
             // snapshots (latest_yuv) and AI inference alike.
-            if self.hflip || self.vflip {
+            let (hflip, vflip) = self.flips.load();
+            if hflip || vflip {
                 flip_yu12_in_place(
                     &mut data,
                     self.width as usize,
                     self.height as usize,
-                    self.hflip,
-                    self.vflip,
+                    hflip,
+                    vflip,
                 );
             }
 

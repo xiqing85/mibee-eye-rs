@@ -108,11 +108,38 @@ fn build_alarm(
 /// `DeviceConfig(AlarmReport)` host seam: the MotionDetection switch
 /// gates AI alarm NOTIFYs at runtime (FieldDetection has no source on
 /// this camera — no AI region events).
-pub struct AlarmReportGate(pub Arc<AlarmBridge>);
+pub struct DeviceConfigGlue {
+    /// MotionDetection switch gates AI alarm NOTIFYs at runtime
+    /// (FieldDetection has no source on this camera — no AI region
+    /// events).
+    pub alarm: Arc<AlarmBridge>,
+    /// FrameMirror flips the captured frames at runtime (mode per
+    /// A.2.1.22 via [`mirror_mode_to_flips`]). Runtime-only state — the
+    /// persisted camera.hflip/vflip config still governs boot.
+    pub flips: Arc<crate::camera::v4l2_capture::Flips>,
+}
 
-impl crate::gb28181::server::DeviceConfigHandler for AlarmReportGate {
+impl crate::gb28181::server::DeviceConfigHandler for DeviceConfigGlue {
     fn on_alarm_report(&self, motion_detection: u32, _field_detection: u32) {
-        self.0.set_motion_reporting(motion_detection == 1);
+        self.alarm.set_motion_reporting(motion_detection == 1);
+    }
+
+    fn on_frame_mirror(&self, mode: u32) {
+        let (hflip, vflip) = mirror_mode_to_flips(mode);
+        self.flips.set(hflip, vflip);
+    }
+}
+
+/// A.2.1.22 frameMirrorCfgType: 0 不启用, 1 水平镜像, 2 上下镜像, 3 中心
+/// (both). Anything else leaves the frames untouched (defensive — the
+/// library only decodes 0-3).
+#[must_use]
+pub fn mirror_mode_to_flips(mode: u32) -> (bool, bool) {
+    match mode {
+        1 => (true, false),
+        2 => (false, true),
+        3 => (true, true),
+        _ => (false, false),
     }
 }
 
@@ -172,6 +199,15 @@ mod tests {
         let b = AlarmBridge::new(true, Duration::from_secs(30));
         assert!(!b.on_detections(1_000, 3));
         assert!(!b.on_detections(2_000, 0));
+    }
+
+    #[test]
+    fn mirror_mode_maps_to_flips() {
+        assert_eq!(mirror_mode_to_flips(0), (false, false));
+        assert_eq!(mirror_mode_to_flips(1), (true, false));
+        assert_eq!(mirror_mode_to_flips(2), (false, true));
+        assert_eq!(mirror_mode_to_flips(3), (true, true));
+        assert_eq!(mirror_mode_to_flips(9), (false, false), "defensive");
     }
 
     #[test]

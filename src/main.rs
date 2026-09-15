@@ -180,6 +180,8 @@ async fn main() {
         realm: "MiBee Eye RTSP".to_string(),
     };
     let mut latest_yuv: Option<mibee_eye_raspi_rs::camera::v4l2_capture::LatestYuv> = None;
+    // Live flip flags handle for the GB FrameMirror control (runtime).
+    let mut gb_flips: Option<Arc<mibee_eye_raspi_rs::camera::v4l2_capture::Flips>> = None;
     let mut au_hub_for_web: Option<Arc<mibee_eye_raspi_rs::h264::hub::AuHub>> = None;
     let mut au_hub: Option<Arc<mibee_eye_raspi_rs::h264::hub::AuHub>> = None;
     match RtspServer::new(rtsp_config).await {
@@ -195,8 +197,12 @@ async fn main() {
                 }
             });
 
-            latest_yuv =
-                start_camera_pipeline(&config, au_hub_internal, Arc::clone(&idr_flag)).await;
+            if let Some((yuv, flips)) =
+                start_camera_pipeline(&config, au_hub_internal, Arc::clone(&idr_flag)).await
+            {
+                latest_yuv = Some(yuv);
+                gb_flips = Some(flips);
+            }
         }
         Err(e) => eprintln!("rtsp: failed to bind :{} â {e}", config.rtsp.port),
     }
@@ -519,6 +525,20 @@ async fn main() {
                     }
                 });
             }
+            // Static surveyed coordinates → MobilePosition NOTIFYs
+            // (§9.5.3) while a platform subscribes; unset = no source.
+            let static_position: Option<
+                Arc<dyn mibee_eye_raspi_rs::gb28181::subscribe::MobilePositionSource>,
+            > = if gb_config.longitude.is_empty() || gb_config.latitude.is_empty() {
+                None
+            } else {
+                Some(Arc::new(
+                    mibee_eye_raspi_rs::gb28181_position::StaticPosition::new(
+                        &gb_config.longitude,
+                        &gb_config.latitude,
+                    ),
+                ))
+            };
             println!("gb28181: starting on port {}", gb_config.local_sip_port);
             // Snapshot executor input: the same shared latest-YUV slot
             // the /snapshot endpoint serves (an empty slot when the
@@ -545,13 +565,17 @@ async fn main() {
                                 },
                             )))
                             .with_config_handler(Some(Arc::new(
-                                mibee_eye_raspi_rs::gb28181_alarm::AlarmReportGate(Arc::clone(
-                                    &alarm_bridge,
-                                )),
+                                mibee_eye_raspi_rs::gb28181_alarm::DeviceConfigGlue {
+                                    alarm: Arc::clone(&alarm_bridge),
+                                    flips: gb_flips
+                                        .clone()
+                                        .unwrap_or_else(|| Arc::new(Default::default())),
+                                },
                             )))
                             .with_control_handler(Some(Arc::new(ForceIframeControl(Arc::clone(
                                 &idr_flag,
-                            )))));
+                            )))))
+                            .with_position_source(static_position.clone());
                             // Hand the live notifier to the alarm bridge
                             // before the task owns the server.
                             alarm_bridge.update_notifier(Some(built.notifier()));
@@ -728,7 +752,10 @@ async fn start_camera_pipeline(
     config: &Config,
     au_hub: Arc<mibee_eye_raspi_rs::h264::hub::AuHub>,
     idr_flag: Arc<std::sync::atomic::AtomicBool>,
-) -> Option<mibee_eye_raspi_rs::camera::v4l2_capture::LatestYuv> {
+) -> Option<(
+    mibee_eye_raspi_rs::camera::v4l2_capture::LatestYuv,
+    Arc<mibee_eye_raspi_rs::camera::v4l2_capture::Flips>,
+)> {
     let device = config.camera.device.clone();
     let width = config.camera.width;
     let height = config.camera.height;
@@ -743,6 +770,7 @@ async fn start_camera_pipeline(
     // Device-level flips (camera.hflip / camera.vflip) are baked into the
     // captured frames before encoding — every consumer sees them.
     producer.set_flips(config.camera.hflip, config.camera.vflip);
+    let flips_handle = producer.flips_arc();
 
     // Video watermark (watermark.* config, SPEC §5.2) — same bake-in point.
     // Fail-open: a broken font_path falls back to the embedded font inside
@@ -870,7 +898,7 @@ async fn start_camera_pipeline(
         }
     });
 
-    Some(latest_yuv)
+    Some((latest_yuv, flips_handle))
 }
 
 /// Resolve the configuration file path.

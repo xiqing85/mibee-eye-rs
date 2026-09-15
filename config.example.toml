@@ -132,6 +132,13 @@ enabled = false
 # type: integer  |  default: 30
 #alarm_cooldown_secs = 30
 
+# Surveyed coordinates reported as MobilePosition NOTIFYs while a platform
+# holds a position subscription (GB 度分秒 string form, carried verbatim;
+# both keys must be set to enable).
+# type: string  |  default: ""
+#longitude = "1163942.55E"
+#latitude = "395436.30N"
+
 # GB28181 platform SIP server address
 # type: string  |  default: "192.168.1.1"  |  env: MIBEE_EYE_GB28181_PLATFORM_SIP_ADDRESS
 platform_sip_address = "192.168.1.1"
