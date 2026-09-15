@@ -38,10 +38,10 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 env_logger = "0.11"
 # GB/T 28181 device stack (extracted library)
 # Pinned to unreleased upstream main ahead of the next capability package:
-# 909863c = ILP32 fix (#56) + DeviceControl (#58) + §9.4.2 MediaStatus
-# (#60) + 2022 information-query minimal responses (#59) — all v0.3.0.
-# Re-point at crates.io when they ship.
-gb28181-rs = { git = "https://github.com/mickeyzzc/gb28181-rs", rev = "909863c" }
+# 250a208 = ILP32 fix (#56) + DeviceControl (#58) + §9.4.2 MediaStatus
+# (#60) + 2022 info-query responses (#59) + SUBSCRIBE/NOTIFY framework
+# (#57 subscription half) — all v0.3.0. Re-point at crates.io when they ship.
+gb28181-rs = { git = "https://github.com/mickeyzzc/gb28181-rs", rev = "250a208" }
 # ONVIF Device stack (extracted library)
 onvif-device-rs = "0.6.0"
 anyhow = "1"
