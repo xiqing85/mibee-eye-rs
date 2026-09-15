@@ -47,6 +47,19 @@ Use conventional commits:
 Tests land in the same change as the code they cover; bug fixes come with a
 failing test that reproduces the bug first.
 
+## Release Cadence
+
+Releases are **synchronized across both MiBee Eye implementations**
+([mibee-eye-rs](https://github.com/xiqing85/mibee-eye-rs) and
+[mibee-eye-go](https://github.com/xiqing85/mibee-eye-go)): same version
+number, same day, cross-linked bilingual release notes. **One repo never
+releases alone** — including patches: if only one implementation is
+affected, both still tag the same patch version, each changelog stating
+its own content. A capability ships only when both implementations are
+ready; if one lags, the release waits. See
+[docs/roadmap-v0.3.0.md](docs/roadmap-v0.3.0.md) for the current
+synchronized capability package.
+
 ## Issue Tracker
 
 Issues for both MiBee Eye implementations (Rust and Go) are tracked in one

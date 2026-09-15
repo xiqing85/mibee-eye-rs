@@ -2,9 +2,16 @@
 
 Notable changes to MiBee Eye (Rust implementation) are documented here.
 
-## [Unreleased]
+> **Releases are synchronized** with the Go implementation
+> ([mibee-eye-go](https://github.com/xiqing85/mibee-eye-go)): same version
+> number, same day, cross-linked release notes — never one repo alone. A
+> v0.3.0 tag published on 2026-09-14 for this repo alone was deleted the
+> same week before the synchronized release; everything below `Unreleased`
+> ships with the synchronized v0.3.0 (headline scope: complete GB/T
+> 28181-2022 device-role coverage — see
+> [docs/roadmap-v0.3.0.md](docs/roadmap-v0.3.0.md)).
 
-## [0.3.0] — 2026-09-14
+## [Unreleased]
 
 - **`storage-webdav` / `storage-s3` / `storage-smb` features wired up** —
   the three `StorageBackend` implementations compiled behind these flags
@@ -29,7 +36,7 @@ Notable changes to MiBee Eye (Rust implementation) are documented here.
   [gb28181-rs#55](https://github.com/mickeyzzc/gb28181-rs/issues/55)) is
   fixed upstream and consumed via a git pin (`fc049b8`, unreleased there —
   per the merge-≠-release cadence); `armv7-unknown-linux-musleabihf` joins
-  the release matrix with the next tag. Local cross-build verified
+  the release matrix with the synchronized v0.3.0. Local cross-build verified
   (full feature set, statically linked ~5 MB). No 32-bit hardware in the
   test fleet — treat the armv7 artifact as software-encode oriented
   (boards with a V4L2 M2M encoder are untested on 32-bit).
