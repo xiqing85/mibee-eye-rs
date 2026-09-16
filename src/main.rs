@@ -463,6 +463,10 @@ async fn main() {
     });
 
     // --- Start GB28181 server (if enabled) ---
+    // Coordinates process exits (SIGTERM / web restart) with the GB
+    // supervisor below: exit paths request, the supervisor deregisters
+    // (REGISTER Expires: 0) and only then acks.
+    let gb_exit = GracefulExit::new();
     if config.gb28181.enabled {
         if let Some(gb_hub) = au_hub.clone() {
             let mut gb_config = config.gb28181.clone();
@@ -569,7 +573,9 @@ async fn main() {
                 .unwrap_or_else(|| Arc::new(std::sync::Mutex::new(None)));
             let rec_pause_gb = Arc::clone(&rec_pause);
             let recording_enabled_gb = config.recording.enabled;
+            let gb_exit_sup = gb_exit.clone();
             tokio::spawn(async move {
+                let mut want_rx = gb_exit_sup.want.subscribe();
                 loop {
                     // At boot the interface may still be coming up ("Network
                     // is unreachable") — retry with backoff instead of
@@ -616,13 +622,48 @@ async fn main() {
                         Duration::from_secs(30),
                     )
                     .await;
-                    let _ = server.await;
-                    eprintln!("gb28181: server stopped — restarting");
+                    if *want_rx.borrow() {
+                        // Exit requested while retrying — nothing to
+                        // deregister (the server never came up).
+                        let _ = gb_exit_sup.done.send(true);
+                        break;
+                    }
+                    let mut server = Box::pin(server);
+                    tokio::select! {
+                        _ = &mut server => {
+                            eprintln!("gb28181: server stopped — restarting");
+                        }
+                        _ = want_rx.changed() => {
+                            if !*want_rx.borrow() { continue; }
+                            // Graceful exit: deregister first (REGISTER
+                            // Expires: 0, 401 dance, 2s timeouts inside the
+                            // library). Every failure only logs — the exit
+                            // must always proceed.
+                            match tokio::time::timeout(
+                                Duration::from_secs(8),
+                                server.as_mut().shutdown_with_deregister(),
+                            ).await {
+                                Ok(Ok(())) => println!("gb28181: deregistered before exit"),
+                                Ok(Err(e)) => eprintln!("gb28181: deregister error — {e}"),
+                                Err(_) => {
+                                    eprintln!("gb28181: deregister timed out; aborting server task");
+                                    server.as_mut().abort();
+                                }
+                            }
+                            let _ = gb_exit_sup.done.send(true);
+                            break;
+                        }
+                    }
                 }
             });
         } else {
             eprintln!("gb28181: enabled but RTSP server failed to create au_hub - skipping");
+            gb_exit.mark_done();
         }
+    } else {
+        // GB disabled — exit paths must not wait for a deregister that
+        // will never happen.
+        gb_exit.mark_done();
     }
 
     // --- Start local recording (if enabled) ---
@@ -693,12 +734,34 @@ async fn main() {
         web = web.with_ai_loader(loader);
     }
     web = web.with_registry(registry);
-    // POST /api/system/restart (SPEC §5.1): exit after a grace period; the
-    // systemd unit (Restart=always) brings the service back with the newly
-    // persisted config applied.
-    web = web.with_restart_action(std::sync::Arc::new(|| {
-        std::process::exit(0);
+    // POST /api/system/restart (SPEC §5.1): deregister GB28181 first so the
+    // platform notices the restart immediately, then exit; the systemd unit
+    // (Restart=always) brings the service back with the newly persisted
+    // config applied. Spawned (not inline) so the HTTP handler returns and
+    // the response flushes before the process dies.
+    let gb_exit_restart = gb_exit.clone();
+    web = web.with_restart_action(std::sync::Arc::new(move || {
+        let exit = gb_exit_restart.clone();
+        tokio::spawn(async move {
+            graceful_exit(exit).await;
+        });
     }));
+    // SIGTERM (systemd stop/restart) gets the same sequence: request the
+    // GB supervisor to deregister, then exit once it acks (10s ceiling).
+    {
+        let exit = gb_exit.clone();
+        tokio::spawn(async move {
+            use tokio::signal::unix::{signal, SignalKind};
+            let mut term = signal(SignalKind::terminate()).expect("install SIGTERM handler");
+            let mut int = signal(SignalKind::interrupt()).expect("install SIGINT handler");
+            tokio::select! {
+                _ = term.recv() => println!("shutdown: SIGTERM received"),
+                _ = int.recv() => println!("shutdown: SIGINT received"),
+                _ = tokio::signal::ctrl_c() => println!("shutdown: ctrl_c received"),
+            }
+            graceful_exit(exit).await;
+        });
+    }
     if let Some(bus) = ai_event_bus {
         web = web.with_event_bus(bus);
     }
@@ -710,7 +773,117 @@ async fn main() {
 }
 
 // ---------------------------------------------------------------------------
-// AI â WebSocket bridge
+// Graceful exit coordinator (SIGTERM / web restart → GB deregister → exit)
+// ---------------------------------------------------------------------------
+
+/// Two-phase shutdown handshake between process exit paths and the GB28181
+/// supervisor task:
+///
+/// - exit paths (SIGTERM/SIGINT handler, `POST /api/system/restart`) raise
+///   `want` and then block on `done` (10s ceiling — exit must always win);
+/// - the supervisor selects on `want` between restarts, deregisters the
+///   live server (REGISTER `Expires: 0`) and raises `done`;
+/// - when GB is disabled (or never started) `mark_done` short-circuits the
+///   handshake so exits do not stall.
+#[derive(Clone)]
+struct GracefulExit {
+    want: std::sync::Arc<tokio::sync::watch::Sender<bool>>,
+    done: std::sync::Arc<tokio::sync::watch::Sender<bool>>,
+    /// Hold the initial receivers for the process lifetime: `watch`
+    /// senders refuse to store a value while no receiver exists, and the
+    /// first supervisor/waiter may subscribe only after an exit path has
+    /// already fired.
+    _keep_alive: (
+        std::sync::Arc<tokio::sync::watch::Receiver<bool>>,
+        std::sync::Arc<tokio::sync::watch::Receiver<bool>>,
+    ),
+}
+
+impl GracefulExit {
+    fn new() -> Self {
+        let (want, want_rx) = tokio::sync::watch::channel(false);
+        let (done, done_rx) = tokio::sync::watch::channel(false);
+        Self {
+            want: std::sync::Arc::new(want),
+            done: std::sync::Arc::new(done),
+            _keep_alive: (std::sync::Arc::new(want_rx), std::sync::Arc::new(done_rx)),
+        }
+    }
+
+    /// Nothing will deregister — release exit paths immediately.
+    fn mark_done(&self) {
+        let _ = self.done.send(true);
+    }
+
+    fn request(&self) {
+        let _ = self.want.send(true);
+    }
+
+    /// Resolve once the supervisor acked (or was marked done up front).
+    async fn wait_done(&self) {
+        let mut rx = self.done.subscribe();
+        if *rx.borrow() {
+            return;
+        }
+        let _ = rx.changed().await;
+    }
+}
+
+/// Exit sequence shared by SIGTERM and the web restart action: request the
+/// GB supervisor to deregister, wait for its ack (bounded), exit.
+async fn graceful_exit(exit: GracefulExit) {
+    exit.request();
+    if tokio::time::timeout(Duration::from_secs(10), exit.wait_done())
+        .await
+        .is_err()
+    {
+        eprintln!("shutdown: GB deregister did not finish in time — exiting anyway");
+    }
+    println!("shutdown: exiting");
+    std::process::exit(0);
+}
+
+#[cfg(test)]
+mod graceful_exit_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn request_then_done_unblocks_waiter() {
+        let exit = GracefulExit::new();
+        let waiter = exit.clone();
+        let task = tokio::spawn(async move { waiter.wait_done().await });
+        // Not done yet — the waiter must still be pending.
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        assert!(!task.is_finished());
+        exit.request(); // irrelevant to done, but must not unblock
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        assert!(!task.is_finished());
+        exit.mark_done();
+        task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn marked_done_waiter_returns_immediately() {
+        let exit = GracefulExit::new();
+        exit.mark_done();
+        // Bounded wait — completes without another send (no hang = pass).
+        tokio::time::timeout(Duration::from_millis(100), exit.wait_done())
+            .await
+            .expect("marked-done handshake resolves immediately");
+    }
+
+    #[test]
+    fn request_is_idempotent() {
+        let exit = GracefulExit::new();
+        exit.request();
+        exit.request();
+        let rx = exit.want.subscribe();
+        assert!(*rx.borrow());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// AI → WebSocket bridge
 // ---------------------------------------------------------------------------
 // GB DeviceControl: force IDR
 // ---------------------------------------------------------------------------
