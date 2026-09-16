@@ -27,6 +27,10 @@ pub const DEFAULT_ALARM_COOLDOWN_SECS: u64 = 30;
 /// DeviceConfig AlarmReport switch (runtime gate).
 pub struct AlarmBridge {
     notifier: RwLock<Option<Arc<DeviceNotifier>>>,
+    /// Optional rising-edge listener (epoch-ms, target count): the web
+    /// SSE `alarm` event (SPEC v1 §6) rides the same accepted edge as
+    /// the NOTIFY, independent of platform delivery.
+    sse_sink: RwLock<Option<tokio::sync::mpsc::UnboundedSender<(u64, usize)>>>,
     /// Runtime gate from `DeviceConfig(AlarmReport)` MotionDetection
     /// (0 off, 1 on). Boot default comes from config.
     motion_reporting: AtomicBool,
@@ -42,6 +46,7 @@ impl AlarmBridge {
     pub fn new(enabled: bool, cooldown: Duration) -> Self {
         Self {
             notifier: RwLock::new(None),
+            sse_sink: RwLock::new(None),
             motion_reporting: AtomicBool::new(enabled),
             prev_target: AtomicBool::new(false),
             last_sent_ms: AtomicI64::new(-1),
@@ -53,6 +58,11 @@ impl AlarmBridge {
     /// instance in (and `None` would detach — kept for symmetry).
     pub fn update_notifier(&self, notifier: Option<Arc<DeviceNotifier>>) {
         *self.notifier.write().expect("alarm notifier lock") = notifier;
+    }
+
+    /// Install the rising-edge listener (SPEC v1 §6 `alarm` SSE event).
+    pub fn set_sse_sink(&self, sink: Option<tokio::sync::mpsc::UnboundedSender<(u64, usize)>>) {
+        *self.sse_sink.write().expect("alarm sse sink lock") = sink;
     }
 
     /// `DeviceConfig(AlarmReport)` MotionDetection switch (0 off, 1 on).
@@ -67,6 +77,11 @@ impl AlarmBridge {
     pub fn on_detections(&self, now_ms: u64, target_count: usize) -> bool {
         if !self.take_edge(now_ms, target_count > 0) {
             return false;
+        }
+        // The SSE alarm rides the accepted edge regardless of whether a
+        // NOTIFY can go out (no server / nobody subscribed).
+        if let Some(sink) = self.sse_sink.read().expect("alarm sse sink lock").clone() {
+            let _ = sink.send((now_ms, target_count));
         }
         let Some(notifier) = self.notifier.read().expect("alarm notifier lock").clone() else {
             return false;
@@ -195,6 +210,21 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn accepted_edge_fires_sse_sink_without_notifier() {
+        let b = AlarmBridge::new(true, Duration::from_secs(30));
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        b.set_sse_sink(Some(tx));
+        // Rising edge accepted (gate on) — the SSE alarm must fire even
+        // though no notifier is attached (NOTIFY delivery is separate).
+        assert!(!b.on_detections(1_000, 2));
+        // Unbounded channel: the send already happened synchronously.
+        assert_eq!(rx.try_recv(), Ok((1_000, 2)));
+        // Cooldown-suppressed edge must not re-fire.
+        assert!(!b.on_detections(2_000, 3));
+        assert!(rx.try_recv().is_err());
+    }
+
     fn on_detections_without_notifier_is_a_safe_skip() {
         let b = AlarmBridge::new(true, Duration::from_secs(30));
         assert!(!b.on_detections(1_000, 3));

@@ -182,6 +182,12 @@ pub async fn capabilities_handler(State(state): State<Arc<AppState>>) -> Json<se
     if ai_hot_swap {
         events.push("ai_model_changed");
     }
+    // SPEC v1 §6 `alarm`: the AI→GB28181 alarm bridge's rising edges
+    // also reach the SSE hub (advertised with GB28181 enabled — the
+    // bridge exists only then; the event additionally requires AI on).
+    if cfg.gb28181.enabled {
+        events.push("alarm");
+    }
     ok_env(serde_json::json!({
         "spec_version": "1",
         "device": {
@@ -1360,6 +1366,11 @@ mod tests {
         assert_eq!(json["data"]["ai_models"], false);
         let events = json["data"]["events"].as_array().expect("events");
         assert!(!events.iter().any(|e| e == "ai_model_changed"));
+        // SPEC v1 §6 `alarm` is advertised only with GB28181 enabled (the
+        // alarm bridge exists only then) — the default test config has it
+        // off. (The positive case is the Go twin's
+        // TestCapabilitiesAnnounceAlarmEvent.)
+        assert!(!events.iter().any(|e| e == "alarm"));
     }
 
     #[tokio::test]
