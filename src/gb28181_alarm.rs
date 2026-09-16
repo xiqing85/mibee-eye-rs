@@ -210,7 +210,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn accepted_edge_fires_sse_sink_without_notifier() {
         let b = AlarmBridge::new(true, Duration::from_secs(30));
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -225,6 +224,7 @@ mod tests {
         assert!(rx.try_recv().is_err());
     }
 
+    #[test]
     fn on_detections_without_notifier_is_a_safe_skip() {
         let b = AlarmBridge::new(true, Duration::from_secs(30));
         assert!(!b.on_detections(1_000, 3));
