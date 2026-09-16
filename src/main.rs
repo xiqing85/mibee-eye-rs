@@ -503,6 +503,24 @@ async fn main() {
                 config.gb28181.alarm_notify_enabled,
                 Duration::from_secs(config.gb28181.alarm_cooldown_secs),
             ));
+            // SPEC v1 §6 `alarm` SSE: the bridge reports accepted rising
+            // edges; the forwarder formats them onto the web event hub.
+            let (alarm_tx, mut alarm_rx) = tokio::sync::mpsc::unbounded_channel::<(u64, usize)>();
+            alarm_bridge.set_sse_sink(Some(alarm_tx));
+            tokio::spawn(async move {
+                while let Some((ms, targets)) = alarm_rx.recv().await {
+                    mibee_eye_raspi_rs::web::events::global_hub().broadcast(
+                        "alarm",
+                        &serde_json::json!({
+                            "camera_id": "0",
+                            "active": true,
+                            "source": "ai",
+                            "targets": targets,
+                            "timestamp": ms,
+                        }),
+                    );
+                }
+            });
             if let Some(bus) = ai_event_bus.clone() {
                 let bridge = Arc::clone(&alarm_bridge);
                 tokio::spawn(async move {
