@@ -17,6 +17,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # A tagged release must carry the newest shared web UI: the embedded
+      # copy has to match mibee-eye-webui@main byte-for-byte, otherwise the
+      # release fails and the frontend is re-synced first (make sync-rs in
+      # the mibee-eye-webui repo).
+      - name: Verify the embedded web UI matches mibee-eye-webui@main
+        run: |
+          git clone --depth 1 https://github.com/xiqing85/mibee-eye-webui.git /tmp/mibee-eye-webui
+          diff -r /tmp/mibee-eye-webui/static static
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
