@@ -43,10 +43,9 @@ AI 检测功能旨在超越简单的运动检测，为 mibee-eye-raspi-rs 提供
 
 ### 部署模型（Option A）
 
-```
-mibee-eye-raspi-rs (aarch64, gnu)  +  libonnxruntime.so
-        │                                  │
-        └── ORT_DYLIB_PATH=/usr/local/lib/libonnxruntime.so
+```mermaid
+flowchart LR
+    BIN["mibee-eye-raspi-rs<br/>(aarch64, gnu)"] ---|"ORT_DYLIB_PATH=<br/>/usr/local/lib/libonnxruntime.so"| SO["libonnxruntime.so"]
 ```
 
 - 交叉编译：`cargo zigbuild --release --features v4l2-encoder,ai --target aarch64-unknown-linux-gnu`
@@ -166,12 +165,10 @@ AI 检测功能将采用 Rust 生态中的机器学习推理框架，配合预�
 
 ### 架构设计
 
-```
-视频流 → 帧提取 → YUV → 预处理 → 推理引擎 → 后处理 → Detection[]
-                                                   │
-                                            模型加载器
-                                                   │
-                                            模型文件系统
+```mermaid
+flowchart LR
+    V["视频流"] --> F["帧提取"] --> Y["YUV"] --> P["预处理"] --> I["推理引擎"] --> POST["后处理"] --> D["Detection[]"]
+    M["模型文件系统"] --> L["模型加载器"] --> I
 ```
 
 ### Cargo 依赖（当前）
