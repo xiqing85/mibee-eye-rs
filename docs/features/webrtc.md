@@ -118,17 +118,10 @@ video_track.write(&sample, &VideoFrame { ... }).await?;
 
 **架构：**
 
-```
-┌─────────────┐         ┌─────────────┐         ┌─────────────┐
-│   Browser   │         │  Signaling  │         │    RPi      │
-│  (Client)   │◄───────►│   Server    │◄───────►│  (Server)   │
-│             │  SDP    │   (WebSocket)│  SDP    │             │
-│   WebRTC    │ Offer   │             │  Answer │   WebRTC    │
-└─────────────┘         └─────────────┘         └─────────────┘
-       │                                                │
-       │                                                │
-       ▼                                                ▼
-  P2P Connection (STUN/TURN) ←────── ICE 候选 ───────►
+```mermaid
+flowchart LR
+    B["Browser (Client)<br/>WebRTC"] <-->|"SDP Offer / Answer (WebSocket JSON)"| S["Signaling Server"] <-->|"SDP Offer / Answer"| R["RPi (Server)<br/>WebRTC"]
+    B <-.->|"ICE 候选 → P2P 连接 (STUN/TURN)"| R
 ```
 
 **信令协议：**
