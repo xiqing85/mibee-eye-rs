@@ -3,6 +3,7 @@ pub mod camera;
 pub mod config;
 pub mod features;
 pub mod gb28181_alarm;
+pub mod gb28181_date;
 pub mod gb28181_position;
 pub mod gb28181_snapshot;
 pub mod gb35114_glue;
