@@ -23,7 +23,7 @@ NVRs — pick by deployment profile:
 
 | Pick the **Go** implementation when… | Pick the **Rust** implementation when… |
 |---|---|
-| You want the quickest path: zero-CGO build, stock cross-compile | The board is memory/flash constrained (~2 MB binary, 6–12 MB RSS) |
+| You want the quickest path: zero-CGO build, stock cross-compile | The board is memory/flash constrained (~2 MB binary; see the measured full-load RSS below) |
 | You want HLS browser playback out of the box | You want the OSD watermark burned into every output |
 | You need the i18n UI or the runtime metrics API | You want capture + encode fully in-process (no capture subprocess) |
 | You prefer hacking on a Go codebase | You prefer hacking on a Rust codebase |
@@ -142,9 +142,9 @@ sequenceDiagram
 | Metric | Go implementation | Rust implementation |
 |--------|-------------------|---------------------|
 | Binary size | ~15 MB | ~2 MB |
-| Memory usage (full feature set) | 15–25 MB (+15 MB when the optional AI build is used) | **~94 MB measured** (v0.2.0, see below) |
+| Memory usage (full feature set) | ~15–25 MB lean; ~74 MB main process measured (AI build)¹ | **~93 MB measured** (v0.2.0, re-confirmed on current main — see below) |
 | Subprocess dependencies | mtxrpicam + ffmpeg (HLS) | none |
-| CPU usage | ~15% | **~1.4 cores measured** (v0.2.0, see below) |
+| CPU usage | ~15% lean; ~2.2–2.8 cores measured (AI build)¹ | **~1.4 cores measured** (v0.2.0, see below) |
 
 Measured 2026-09-14 on `rpi3b-storage` (RPi 3B, OV5647 1280×720@15, v0.2.0,
 hardware V4L2 M2M encoder `/dev/video11`, GB28181 registered + recording +
@@ -154,6 +154,13 @@ overhead on top: a no-client sample reads the same), CPU 124–146%
 (≈139% avg of the four cores). A bare pipeline without GB28181/recording/
 watermark sits far lower — treat these as full-feature numbers, and
 reproduce on your own board with [`bench/rpi-bench.sh`](bench/rpi-bench.sh).
+Re-measured 2026-09-17 on the same host/camera/config (current main):
+RSS flat at 93.3 MB, CPU 114–145% — unchanged.
+
+¹ Go-side figures measured 2026-09-17 on `rpi3b-cam` (RPi 3B, IMX219
+1280×720@15, AI build, `rpicamvid` capture mode, GB28181 registered,
+one RTSP/TCP client): RSS 71–79 MB (avg 74), CPU 179–278% — main
+process only; the rpicam-vid/ffmpeg capture subprocesses are extra.
 
 ---
 
