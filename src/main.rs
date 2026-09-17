@@ -629,29 +629,68 @@ async fn main() {
                         break;
                     }
                     let mut server = Box::pin(server);
-                    tokio::select! {
-                        _ = &mut server => {
-                            eprintln!("gb28181: server stopped — restarting");
-                        }
-                        _ = want_rx.changed() => {
-                            if !*want_rx.borrow() { continue; }
-                            // Graceful exit: deregister first (REGISTER
-                            // Expires: 0, 401 dance, 2s timeouts inside the
-                            // library). Every failure only logs — the exit
-                            // must always proceed.
-                            match tokio::time::timeout(
-                                Duration::from_secs(8),
-                                server.as_mut().shutdown_with_deregister(),
-                            ).await {
-                                Ok(Ok(())) => println!("gb28181: deregistered before exit"),
-                                Ok(Err(e)) => eprintln!("gb28181: deregister error — {e}"),
-                                Err(_) => {
-                                    eprintln!("gb28181: deregister timed out; aborting server task");
-                                    server.as_mut().abort();
+                    // SIP-Date drift observation (§9.10.2): poll the
+                    // platform clock carried by the last REGISTER response
+                    // on the same select — observation only, the clock is
+                    // never adjusted (see gb28181_date). The inner loop
+                    // keeps observing on the SAME server; only a server
+                    // stop or the exit request leaves it.
+                    let mut date_tick = tokio::time::interval(
+                        mibee_eye_raspi_rs::gb28181_date::DATE_OBSERVER_INTERVAL,
+                    );
+                    date_tick.tick().await; // first tick is immediate — skip
+                    let mut last_warned: Option<u64> = None;
+                    loop {
+                        tokio::select! {
+                            _ = &mut server => {
+                                eprintln!("gb28181: server stopped — restarting");
+                                break;
+                            }
+                            _ = date_tick.tick() => {
+                                if let Some(platform) = server.platform_date_unix() {
+                                    let local = std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .map(|d| d.as_secs() as i64)
+                                        .unwrap_or_default();
+                                    use mibee_eye_raspi_rs::gb28181_date::DateDriftOutcome;
+                                    match mibee_eye_raspi_rs::gb28181_date::evaluate_date_drift(
+                                        platform, local, last_warned,
+                                    ) {
+                                        DateDriftOutcome::Warn(drift) => {
+                                            eprintln!(
+                                                "gb28181: WARN platform clock drifts {drift}s from local \
+                                                 (SIP Date, observation only — clock not adjusted)"
+                                            );
+                                            last_warned = Some(drift.unsigned_abs());
+                                        }
+                                        DateDriftOutcome::Recovered => {
+                                            eprintln!("gb28181: platform clock drift back within threshold");
+                                            last_warned = None;
+                                        }
+                                        DateDriftOutcome::Stable => {}
+                                    }
                                 }
                             }
-                            let _ = gb_exit_sup.done.send(true);
-                            break;
+                            _ = want_rx.changed() => {
+                                if !*want_rx.borrow() { continue; }
+                                // Graceful exit: deregister first (REGISTER
+                                // Expires: 0, 401 dance, 2s timeouts inside the
+                                // library). Every failure only logs — the exit
+                                // must always proceed.
+                                match tokio::time::timeout(
+                                    Duration::from_secs(8),
+                                    server.as_mut().shutdown_with_deregister(),
+                                ).await {
+                                    Ok(Ok(())) => println!("gb28181: deregistered before exit"),
+                                    Ok(Err(e)) => eprintln!("gb28181: deregister error — {e}"),
+                                    Err(_) => {
+                                        eprintln!("gb28181: deregister timed out; aborting server task");
+                                        server.as_mut().abort();
+                                    }
+                                }
+                                let _ = gb_exit_sup.done.send(true);
+                                break;
+                            }
                         }
                     }
                 }
