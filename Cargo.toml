@@ -42,8 +42,10 @@ env_logger = "0.11"
 # (#60) + 2022 info-query responses (#59) + SUBSCRIBE/NOTIFY framework
 # (#57 subscription half) — all v0.3.0. Re-point at crates.io when they ship.
 gb28181-rs = { git = "https://github.com/mickeyzzc/gb28181-rs", rev = "fcdb5fa" }
-# ONVIF Device stack (extracted library)
-onvif-device-rs = "0.6.0"
+# ONVIF Device stack (extracted library) — git pin tracking onvif-rs main
+# (quick-xml 0.41 security migration, PR #37); switch back to crates.io
+# when the library next publishes.
+onvif-device-rs = { git = "https://github.com/mickeyzzc/onvif-rs", rev = "9c1473c" }
 anyhow = "1"
 # AI inference (ONNX Runtime) — optional, behind `ai` feature
 # load-dynamic: no C++ linking at compile time; libonnxruntime.so loaded at runtime via ORT_DYLIB_PATH
