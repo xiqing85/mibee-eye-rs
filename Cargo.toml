@@ -36,16 +36,13 @@ fontdue = "0.9"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 # stdout logging for the protocol libraries (they use the `log` facade)
 env_logger = "0.11"
-# GB/T 28181 device stack (extracted library)
-# Pinned to unreleased upstream main ahead of the next capability package:
-# 250a208 = ILP32 fix (#56) + DeviceControl (#58) + §9.4.2 MediaStatus
-# (#60) + 2022 info-query responses (#59) + SUBSCRIBE/NOTIFY framework
-# (#57 subscription half) — all v0.3.0. Re-point at crates.io when they ship.
-gb28181-rs = { git = "https://github.com/mickeyzzc/gb28181-rs", rev = "fcdb5fa" }
-# ONVIF Device stack (extracted library) — git pin tracking onvif-rs main
-# (quick-xml 0.41 security migration, PR #37); switch back to crates.io
-# when the library next publishes.
-onvif-device-rs = { git = "https://github.com/mickeyzzc/onvif-rs", rev = "9c1473c" }
+# GB/T 28181 device stack (extracted library) — v0.12.0 is the 2022
+# device-side closure package; the previous git pins (fcdb5fa era) are
+# all contained in this release.
+gb28181-rs = "0.12.0"
+# ONVIF Device stack (extracted library) — v0.7.0 ships the quick-xml
+# 0.41 security migration plus the parity batch the git pin tracked.
+onvif-device-rs = "0.7.0"
 anyhow = "1"
 # AI inference (ONNX Runtime) — optional, behind `ai` feature
 # load-dynamic: no C++ linking at compile time; libonnxruntime.so loaded at runtime via ORT_DYLIB_PATH
