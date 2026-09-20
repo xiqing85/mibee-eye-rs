@@ -230,6 +230,7 @@ cp config.example.toml config.toml
 | `[rtmp]` | `enabled` / `url` | `false` / — | 推流到 RTMP 服务 |
 | `[onvif]` | `port` | 8080 | ONVIF SOAP/HTTP 端口 |
 | `[onvif]` | `password` | — | ONVIF 鉴权密码（务必设置！） |
+| `[onvif]` | `events_enabled` | `true` | Pull-Point 事件服务：AI 运动告警以 MotionAlarm 推送给订阅的 NVR |
 | `[web]` | `port` | 8088 | Web 管理端口（凭证缺省沿用 ONVIF） |
 | `[gb28181]` | `enabled` | `false` | SIP 平台注册（`transport`：udp/tcp） |
 | `[recording]` | `enabled` | `false` | 连续 H.264 分段（600s / 保留 3 天 / 上限 8192MB） |

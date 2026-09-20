@@ -13,6 +13,7 @@ pub use gb28181_rs as gb28181;
 pub mod h264;
 pub mod hardware;
 pub mod motion;
+pub mod onvif_alarm;
 // ONVIF Device stack lives in the `onvif-rs` crate; re-exported under the
 // historical module path so `crate::onvif::…` references keep working.
 pub use onvif_device_rs as onvif;

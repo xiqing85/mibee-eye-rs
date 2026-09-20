@@ -339,6 +339,14 @@ async fn main() {
     };
     let mut onvif_server = OnvifServer::new(&onvif_cfg);
 
+    // Pull-Point events service (onvif-device-rs 0.7): AI motion alarms
+    // publish as MotionAlarm while an NVR holds a subscription. The
+    // publish seam must be taken before start; None = disabled by config.
+    let onvif_events = config
+        .onvif
+        .events_enabled
+        .then(|| onvif_server.enable_events());
+
     // Device service handlers. onvif-device-rs 0.6 fail-closes on the
     // neutral identity placeholders (issue #20); Config::load backfills
     // the documented defaults, so an error here means the host explicitly
@@ -462,6 +470,71 @@ async fn main() {
         }
     });
 
+    // --- AI detections → alarm fan-out (one rising-edge bridge) ---
+    // Accepted edges (edge + AlarmReport gate + cooldown) feed three
+    // sinks: GB alarm NOTIFY (§9.5, only while a platform subscribes),
+    // the SPEC v1 §6 `alarm` SSE event, and the ONVIF MotionAlarm
+    // pull-point event. Created outside the GB branch so SSE/ONVIF
+    // alarms do not require GB28181; the GB server task attaches its
+    // notifier below.
+    let alarm_bridge = Arc::new(mibee_eye_raspi_rs::gb28181_alarm::AlarmBridge::new(
+        config.gb28181.alarm_notify_enabled,
+        Duration::from_secs(config.gb28181.alarm_cooldown_secs),
+    ));
+    // SPEC v1 §6 `alarm` SSE: the forwarder formats accepted rising
+    // edges onto the web event hub.
+    let (alarm_tx, mut alarm_rx) = tokio::sync::mpsc::unbounded_channel::<(u64, usize)>();
+    alarm_bridge.set_sse_sink(Some(alarm_tx));
+    tokio::spawn(async move {
+        while let Some((ms, targets)) = alarm_rx.recv().await {
+            mibee_eye_raspi_rs::web::events::global_hub().broadcast(
+                "alarm",
+                &serde_json::json!({
+                    "camera_id": "0",
+                    "active": true,
+                    "source": "ai",
+                    "targets": targets,
+                    "timestamp": ms,
+                }),
+            );
+        }
+    });
+    // ONVIF MotionAlarm: same accepted edge, published to every live
+    // pull-point subscription (no subscriber = no-op).
+    if let Some(events) = onvif_events.clone() {
+        alarm_bridge.set_onvif_sink(Some(Arc::new(move |_ms, targets| {
+            events.publish_event(mibee_eye_raspi_rs::onvif_alarm::motion_alarm_event(targets));
+        })));
+    }
+
+    // AI detections feed the bridge from the pipeline event bus
+    // (independent of GB28181 being enabled).
+    if let Some(bus) = ai_event_bus.clone() {
+        let bridge = Arc::clone(&alarm_bridge);
+        tokio::spawn(async move {
+            let mut rx = bus.subscribe();
+            loop {
+                match rx.recv().await {
+                    Ok(mibee_eye_raspi_rs::pipeline::bus::PipelineEvent::AiDetection {
+                        detections,
+                        ..
+                    }) => {
+                        let now_ms = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_millis() as u64)
+                            .unwrap_or(0);
+                        bridge.on_detections(now_ms, detections.len());
+                    }
+                    // Lagged batches are fine — the next one
+                    // carries fresh state.
+                    Ok(_) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(_) => break,
+                }
+            }
+        });
+    }
+
     // --- Start GB28181 server (if enabled) ---
     // Coordinates process exits (SIGTERM / web restart) with the GB
     // supervisor below: exit paths request, the supervisor deregisters
@@ -500,56 +573,11 @@ async fn main() {
                     std::process::exit(1);
                 }
             };
-            // AI detections → alarm NOTIFY (§9.5): the bridge is shared
-            // with the DeviceConfig(AlarmReport) gate; the server retry
-            // loop hands each new notifier instance in.
-            let alarm_bridge = Arc::new(mibee_eye_raspi_rs::gb28181_alarm::AlarmBridge::new(
-                config.gb28181.alarm_notify_enabled,
-                Duration::from_secs(config.gb28181.alarm_cooldown_secs),
-            ));
-            // SPEC v1 §6 `alarm` SSE: the bridge reports accepted rising
-            // edges; the forwarder formats them onto the web event hub.
-            let (alarm_tx, mut alarm_rx) = tokio::sync::mpsc::unbounded_channel::<(u64, usize)>();
-            alarm_bridge.set_sse_sink(Some(alarm_tx));
-            tokio::spawn(async move {
-                while let Some((ms, targets)) = alarm_rx.recv().await {
-                    mibee_eye_raspi_rs::web::events::global_hub().broadcast(
-                        "alarm",
-                        &serde_json::json!({
-                            "camera_id": "0",
-                            "active": true,
-                            "source": "ai",
-                            "targets": targets,
-                            "timestamp": ms,
-                        }),
-                    );
-                }
-            });
-            if let Some(bus) = ai_event_bus.clone() {
-                let bridge = Arc::clone(&alarm_bridge);
-                tokio::spawn(async move {
-                    let mut rx = bus.subscribe();
-                    loop {
-                        match rx.recv().await {
-                            Ok(mibee_eye_raspi_rs::pipeline::bus::PipelineEvent::AiDetection {
-                                detections,
-                                ..
-                            }) => {
-                                let now_ms = std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .map(|d| d.as_millis() as u64)
-                                    .unwrap_or(0);
-                                bridge.on_detections(now_ms, detections.len());
-                            }
-                            // Lagged batches are fine — the next one
-                            // carries fresh state.
-                            Ok(_) => {}
-                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
-                            Err(_) => break,
-                        }
-                    }
-                });
-            }
+            // The shared alarm bridge (created above the GB branch —
+            // the SSE/ONVIF sinks do not depend on GB28181) receives
+            // the live notifier per server restart; DeviceConfig(AlarmReport)
+            // keeps gating all three sinks at runtime.
+            let alarm_bridge = Arc::clone(&alarm_bridge);
             // Static surveyed coordinates → MobilePosition NOTIFYs
             // (§9.5.3) while a platform subscribes; unset = no source.
             let static_position: Option<

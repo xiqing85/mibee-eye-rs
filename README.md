@@ -238,6 +238,7 @@ Key settings:
 | `[rtmp]` | `enabled` / `url` | `false` / — | Push the stream to an RTMP server |
 | `[onvif]` | `port` | 8080 | ONVIF SOAP/HTTP port |
 | `[onvif]` | `password` | — | ONVIF authentication (set this!) |
+| `[onvif]` | `events_enabled` | `true` | Pull-Point events service: AI motion alarms as MotionAlarm for NVR subscribers |
 | `[web]` | `port` | 8088 | Web admin UI port (credentials mirror ONVIF by default) |
 | `[gb28181]` | `enabled` | `false` | SIP platform registration (`transport`: udp/tcp) |
 | `[recording]` | `enabled` | `false` | Continuous H.264 segments (600s / 3-day retention / 8192MB cap) |

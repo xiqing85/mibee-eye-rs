@@ -182,10 +182,11 @@ pub async fn capabilities_handler(State(state): State<Arc<AppState>>) -> Json<se
     if ai_hot_swap {
         events.push("ai_model_changed");
     }
-    // SPEC v1 §6 `alarm`: the AI→GB28181 alarm bridge's rising edges
-    // also reach the SSE hub (advertised with GB28181 enabled — the
-    // bridge exists only then; the event additionally requires AI on).
-    if cfg.gb28181.enabled {
+    // SPEC v1 §6 `alarm`: the AI alarm bridge's accepted rising edges
+    // reach the SSE hub (and the ONVIF/GB alarm channels). Advertised
+    // with AI on — the bridge feeds from the AI event bus; GB28181 and
+    // ONVIF are delivery channels, not prerequisites.
+    if cfg.features.ai.enabled {
         events.push("alarm");
     }
     ok_env(serde_json::json!({
@@ -1354,6 +1355,27 @@ mod tests {
             events.iter().any(|e| e == "ai_model_changed"),
             "events must announce ai_model_changed"
         );
+        // SPEC v1 §6 `alarm` follows the AI switch — GB28181 is a delivery
+        // channel, not a prerequisite (the SSE hub, the GB NOTIFY and the
+        // ONVIF MotionAlarm fan out from one bridge). The ai_state
+        // fixture leaves the config's AI switch off, so no alarm yet.
+        assert!(!events.iter().any(|e| e == "alarm"));
+
+        // Flipping the AI switch on (GB28181 still off) must announce it.
+        let (state, _m) = ai_state(ok_loader());
+        state.config.write().await.features.ai.enabled = true;
+        let app = api_router_with("pw-test-123", state);
+        let (cookie, _csrf) = login(&app).await;
+        let res = app
+            .oneshot(authed_get("/api/capabilities", &cookie))
+            .await
+            .unwrap();
+        let json = body_json(res).await;
+        let events = json["data"]["events"].as_array().expect("events");
+        assert!(
+            events.iter().any(|e| e == "alarm"),
+            "alarm event must follow the AI switch, independent of GB28181"
+        );
 
         // Without hot-swap wiring the capability stays off.
         let app = api_router("pw-test-123");
@@ -1366,10 +1388,6 @@ mod tests {
         assert_eq!(json["data"]["ai_models"], false);
         let events = json["data"]["events"].as_array().expect("events");
         assert!(!events.iter().any(|e| e == "ai_model_changed"));
-        // SPEC v1 §6 `alarm` is advertised only with GB28181 enabled (the
-        // alarm bridge exists only then) — the default test config has it
-        // off. (The positive case is the Go twin's
-        // TestCapabilitiesAnnounceAlarmEvent.)
         assert!(!events.iter().any(|e| e == "alarm"));
     }
 
