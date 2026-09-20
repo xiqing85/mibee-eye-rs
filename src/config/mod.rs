@@ -1239,13 +1239,34 @@ mod tests {
     static ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
     /// Helper: write a TOML string to a temporary file and return its path.
+    /// Filenames carry a per-call counter: tests run in parallel threads
+    /// within one process, and keying by content length made two
+    /// different same-length configs overwrite each other (a real flake
+    /// — the serial batch tripped it once on 2026-09-20).
     fn temp_config(content: &str) -> std::path::PathBuf {
+        static CALL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = CALL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!("mibee_eye_test_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join(format!("config_{}.toml", content.len()));
+        let path = dir.join(format!("config_{n}_{}.toml", content.len()));
         let mut f = std::fs::File::create(&path).unwrap();
         write!(f, "{content}").unwrap();
         path
+    }
+
+    #[test]
+    fn temp_config_same_length_contents_do_not_collide() {
+        // Regression for the parallel-test flake: two different
+        // configs of equal length must land in two different files.
+        let a = temp_config("[web]\nport = 1111\n");
+        let b = temp_config("[web]\nport = 2222\n");
+        assert_ne!(a, b);
+        let (x, y) = (
+            std::fs::read_to_string(&a).unwrap(),
+            std::fs::read_to_string(&b).unwrap(),
+        );
+        assert_eq!(x, "[web]\nport = 1111\n");
+        assert_eq!(y, "[web]\nport = 2222\n");
     }
 
     // ------------------------------------------------------------------
@@ -2138,6 +2159,7 @@ enabled = true
 port = 8088
 "#;
         let path = temp_config(toml_str);
+        let _guard = ENV_LOCK.lock();
         let cfg = Config::load(path.to_str().unwrap()).unwrap();
         assert_eq!(cfg.camera.device, "/dev/video0");
         assert_eq!(cfg.camera.width, 640);
@@ -2163,6 +2185,7 @@ height = 480
 fps = 10
 "#;
         let path = temp_config(toml_str);
+        let _guard = ENV_LOCK.lock();
         let cfg = Config::load(path.to_str().unwrap()).unwrap();
         assert_eq!(cfg.device.name, "Pi Camera V1");
         assert_eq!(cfg.device.manufacturer, "Raspberry Pi");
@@ -2184,6 +2207,7 @@ firmware = "9.9.9"
 hardware_id = "cam-x-1"
 "#;
         let path = temp_config(toml_str);
+        let _guard = ENV_LOCK.lock();
         let cfg = Config::load(path.to_str().unwrap()).unwrap();
         assert_eq!(cfg.device.name, "Gate Cam");
         assert_eq!(cfg.device.manufacturer, "Acme");
@@ -2194,6 +2218,7 @@ hardware_id = "cam-x-1"
 
     #[test]
     fn test_load_file_not_found() {
+        let _guard = ENV_LOCK.lock();
         let err = Config::load("/nonexistent/path/for/config.toml").unwrap_err();
         assert!(matches!(err, ConfigError::Io(_)));
     }
@@ -2201,6 +2226,7 @@ hardware_id = "cam-x-1"
     #[test]
     fn test_load_invalid_toml() {
         let path = temp_config("this is not valid toml [[[");
+        let _guard = ENV_LOCK.lock();
         let err = Config::load(path.to_str().unwrap()).unwrap_err();
         assert!(matches!(err, ConfigError::Parse(_)));
     }
@@ -2220,6 +2246,7 @@ port = 0
 port = 0
 "#,
         );
+        let _guard = ENV_LOCK.lock();
         let err = Config::load(path.to_str().unwrap()).unwrap_err();
         assert!(matches!(err, ConfigError::Validation(_)));
     }
