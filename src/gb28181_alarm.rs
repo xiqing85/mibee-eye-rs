@@ -1,14 +1,20 @@
-//! AI detections → GB/T 28181 alarm NOTIFY (§9.5 / A.2.5).
+//! AI detections → alarm fan-out.
 //!
 //! The camera's only alarm source is the AI moving-target detector
-//! (NanoDet). Per the 2022 standard's value tables an analytics alarm is
+//! (NanoDet). One accepted rising edge (edge + gate + cooldown) feeds
+//! three sinks: the GB/T 28181 alarm NOTIFY (§9.5 / A.2.5), the SPEC v1
+//! §6 `alarm` SSE event, and the ONVIF Pull-Point MotionAlarm event
+//! (onvif-device-rs events service — NVRs that manage this camera over
+//! ONVIF subscribe instead of, or besides, the GB alarm channel). Per
+//! the 2022 standard's value tables an analytics alarm is
 //! `AlarmMethod=5` (视频报警) with `AlarmType=2` (运动目标检测报警);
 //! priority is 4 (四级警情 — informational analytics, not a physical
-//! sensor). NOTIFYs fire on the RISING edge of "targets present" with a
-//! cooldown, so a busy scene cannot storm the platform, and the
+//! sensor). Edges fire on the RISING transition of "targets present"
+//! with a cooldown, so a busy scene cannot storm consumers, and the
 //! platform's `DeviceConfig(AlarmReport)` switch (A.2.3.2.10) gates
-//! motion reporting at runtime. Everything is a no-op until a platform
-//! actually SUBSCRIBEs — the library's notifier handles that.
+//! motion reporting at runtime. The NOTIFY is a no-op until a platform
+//! actually SUBSCRIBEs — the library's notifier handles that; the ONVIF
+//! event is a no-op until an NVR holds a pull-point subscription.
 
 use std::sync::{
     atomic::{AtomicBool, AtomicI64, Ordering},
@@ -21,6 +27,10 @@ use crate::gb28181::DeviceNotifier;
 /// Anti-storm default: minimum spacing between alarm NOTIFYs.
 pub const DEFAULT_ALARM_COOLDOWN_SECS: u64 = 30;
 
+/// Rising-edge listener shared by the fan-out sinks: (epoch-ms, target
+/// count) at the accepted edge.
+type EdgeListener = Arc<dyn Fn(u64, usize) + Send + Sync>;
+
 /// Bridges AI detection batches into alarm NOTIFYs on the live GB28181
 /// notifier. Shared between the AI event-bus subscriber (feeds it), the
 /// server lifecycle (updates the notifier slot per restart) and the
@@ -31,6 +41,10 @@ pub struct AlarmBridge {
     /// SSE `alarm` event (SPEC v1 §6) rides the same accepted edge as
     /// the NOTIFY, independent of platform delivery.
     sse_sink: RwLock<Option<tokio::sync::mpsc::UnboundedSender<(u64, usize)>>>,
+    /// Optional rising-edge listener feeding the ONVIF events service
+    /// (epoch-ms, target count): same accepted edge again, independent
+    /// of both the SSE hub and GB NOTIFY delivery.
+    onvif_sink: RwLock<Option<EdgeListener>>,
     /// Runtime gate from `DeviceConfig(AlarmReport)` MotionDetection
     /// (0 off, 1 on). Boot default comes from config.
     motion_reporting: AtomicBool,
@@ -47,6 +61,7 @@ impl AlarmBridge {
         Self {
             notifier: RwLock::new(None),
             sse_sink: RwLock::new(None),
+            onvif_sink: RwLock::new(None),
             motion_reporting: AtomicBool::new(enabled),
             prev_target: AtomicBool::new(false),
             last_sent_ms: AtomicI64::new(-1),
@@ -63,6 +78,12 @@ impl AlarmBridge {
     /// Install the rising-edge listener (SPEC v1 §6 `alarm` SSE event).
     pub fn set_sse_sink(&self, sink: Option<tokio::sync::mpsc::UnboundedSender<(u64, usize)>>) {
         *self.sse_sink.write().expect("alarm sse sink lock") = sink;
+    }
+
+    /// Install the ONVIF events listener (main.rs wraps
+    /// `EventsService::publish_event` + the MotionAlarm event builder).
+    pub fn set_onvif_sink(&self, sink: Option<EdgeListener>) {
+        *self.onvif_sink.write().expect("alarm onvif sink lock") = sink;
     }
 
     /// `DeviceConfig(AlarmReport)` MotionDetection switch (0 off, 1 on).
@@ -82,6 +103,15 @@ impl AlarmBridge {
         // NOTIFY can go out (no server / nobody subscribed).
         if let Some(sink) = self.sse_sink.read().expect("alarm sse sink lock").clone() {
             let _ = sink.send((now_ms, target_count));
+        }
+        // So does the ONVIF MotionAlarm (no NVR subscribed = no-op).
+        if let Some(sink) = self
+            .onvif_sink
+            .read()
+            .expect("alarm onvif sink lock")
+            .clone()
+        {
+            sink(now_ms, target_count);
         }
         let Some(notifier) = self.notifier.read().expect("alarm notifier lock").clone() else {
             return false;
@@ -222,6 +252,43 @@ mod tests {
         // Cooldown-suppressed edge must not re-fire.
         assert!(!b.on_detections(2_000, 3));
         assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn accepted_edge_fires_onvif_sink_without_notifier() {
+        use std::sync::Mutex;
+        let b = AlarmBridge::new(true, Duration::from_secs(30));
+        let seen = Arc::new(Mutex::new(Vec::<(u64, usize)>::new()));
+        let captured = Arc::clone(&seen);
+        b.set_onvif_sink(Some(Arc::new(move |ms, targets| {
+            captured.lock().expect("test capture").push((ms, targets));
+        })));
+        // Rising edge accepted — the ONVIF MotionAlarm fires even with
+        // no notifier attached and no NVR subscribed (publish is a no-op
+        // there; the sink contract only promises the accepted edge).
+        assert!(!b.on_detections(5_000, 4));
+        assert_eq!(*seen.lock().expect("test capture"), vec![(5_000, 4)]);
+        // Cooldown-suppressed and falling edges must not re-fire.
+        assert!(!b.on_detections(6_000, 5));
+        assert!(!b.on_detections(7_000, 0));
+        assert_eq!(seen.lock().expect("test capture").len(), 1);
+        // Detaching the sink is supported (config-off / server stopped).
+        b.set_onvif_sink(None);
+        assert!(!b.on_detections(50_000, 1));
+        assert_eq!(seen.lock().expect("test capture").len(), 1);
+    }
+
+    #[test]
+    fn motion_gate_blocks_onvif_sink_too() {
+        use std::sync::Mutex;
+        let b = AlarmBridge::new(false, Duration::from_secs(30));
+        let seen = Arc::new(Mutex::new(0usize));
+        let captured = Arc::clone(&seen);
+        b.set_onvif_sink(Some(Arc::new(move |_, _| {
+            *captured.lock().expect("test capture") += 1;
+        })));
+        assert!(!b.on_detections(1_000, 1), "gate off at boot");
+        assert_eq!(*seen.lock().expect("test capture"), 0);
     }
 
     #[test]

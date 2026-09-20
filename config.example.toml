@@ -113,6 +113,11 @@ username = "admin"
 # type: string  |  default: ""  |  env: MIBEE_EYE_ONVIF_PASSWORD
 password = ""  # <-- set this!
 
+# Expose the Pull-Point events service: AI motion alarms publish as
+# tns1:VideoSource/MotionAlarm while an NVR holds a subscription
+# type: boolean  |  default: true  |  env: MIBEE_EYE_ONVIF_EVENTS_ENABLED
+events_enabled = true
+
 # --------------------------------------------------------------------------
 # GB28181 SIP server settings
 # --------------------------------------------------------------------------

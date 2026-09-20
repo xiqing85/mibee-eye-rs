@@ -15,6 +15,16 @@ Notable changes to MiBee Eye (Rust implementation) are documented here.
 
 ## [Unreleased]
 
+- **ONVIF Pull-Point events service** (onvif-device-rs 0.7): AI motion
+  alarms now also publish as `tns1:VideoSource/MotionAlarm` while an NVR
+  holds a pull-point subscription — the same accepted rising edge (edge +
+  AlarmReport gate + cooldown) that feeds the GB alarm NOTIFY and the
+  SPEC v1 §6 `alarm` SSE event. New config key `onvif.events_enabled`
+  (default `true`, restart to apply). The `alarm` SSE event is now
+  advertised with AI enabled instead of requiring GB28181 — the alarm
+  bridge fans out to all three channels regardless of which protocol
+  servers run.
+
 - **`storage-webdav` / `storage-s3` / `storage-smb` features wired up** —
   the three `StorageBackend` implementations compiled behind these flags
   referenced crates that were never declared in `Cargo.toml`, so enabling
