@@ -933,7 +933,74 @@ fn default_device_config() -> DeviceConfig {
 /// the neutral placeholders (issue #20). Hosts that omit `[device]` — or
 /// leave fields at the library defaults — keep the documented identity,
 /// which the 0.6 identity validation accepts.
+/// Extract the Raspberry Pi `Serial` line (16 hex, unique per board)
+/// from /proc/cpuinfo contents.
+fn serial_from_cpuinfo(data: &str) -> String {
+    for line in data.lines() {
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        if key.trim() == "Serial" {
+            let serial = value.trim();
+            if !serial.is_empty() {
+                return serial.to_string();
+            }
+        }
+    }
+    String::new()
+}
+
+/// Validate/normalize a /etc/machine-id read: a long-enough token.
+fn normalize_machine_id(data: &str) -> String {
+    let id = data.lines().next().unwrap_or("").trim();
+    if id.len() < 8 {
+        String::new()
+    } else {
+        id.to_string()
+    }
+}
+
+/// Probe a device-level, interface-independent, reboot-stable serial:
+/// the Pi's /proc/cpuinfo `Serial` line, then the Linux machine-id
+/// (both documented locations). Explicitly NOT the MAC — dual-homed
+/// boards (wired + WiFi) would flip identity on interface change.
+/// Empty when nothing is probeable (caller warns, keeps configured).
+fn detect_device_serial() -> String {
+    if let Ok(data) = fs::read_to_string("/proc/cpuinfo") {
+        let serial = serial_from_cpuinfo(&data);
+        if !serial.is_empty() {
+            return serial;
+        }
+    }
+    for path in ["/etc/machine-id", "/var/lib/dbus/machine-id"] {
+        if let Ok(data) = fs::read_to_string(path) {
+            let id = normalize_machine_id(&data);
+            if !id.is_empty() {
+                return id;
+            }
+        }
+    }
+    String::new()
+}
+
 fn backfill_device_identity(device: &mut DeviceConfig) {
+    // Device-level serial fallback (issue #43): an empty serial breaks
+    // the NVR's stable_id dedup; explicit config / env win (applied
+    // before this), otherwise probe the board. Detection failure keeps
+    // the configured value with a warning — never fatal.
+    if device.serial_number.is_empty() {
+        let detected = detect_device_serial();
+        if detected.is_empty() {
+            eprintln!(
+                "WARNING: device serial_number is empty and no device-level serial is \
+                 probeable (no /proc/cpuinfo Serial, no machine-id) — set \
+                 `device.serial_number`; NVR dedup may misbehave"
+            );
+        } else {
+            println!("device: serial_number auto-detected: {detected}");
+            device.serial_number = detected;
+        }
+    }
     if device.name == "ONVIF Device" {
         device.name = "Pi Camera V1".to_string();
     }
@@ -1186,6 +1253,24 @@ mod tests {
     // ------------------------------------------------------------------
 
     #[test]
+    fn serial_from_cpuinfo_parses_pi_serial() {
+        let pi = "Hardware\t: BCM2835\nRevision\t: c03114\nSerial\t\t: 10000000a1b2c3d4\n";
+        assert_eq!(serial_from_cpuinfo(pi), "10000000a1b2c3d4");
+        assert_eq!(serial_from_cpuinfo("no serial here"), "");
+        assert_eq!(serial_from_cpuinfo("Serial\t: \n"), "");
+    }
+
+    #[test]
+    fn normalize_machine_id_takes_first_long_token() {
+        assert_eq!(
+            normalize_machine_id("3f2b1c0d9e8a7b6c5d4e3f2a1b0c9d8e\n"),
+            "3f2b1c0d9e8a7b6c5d4e3f2a1b0c9d8e"
+        );
+        assert_eq!(normalize_machine_id("\n"), "");
+        assert_eq!(normalize_machine_id("short\n"), "");
+    }
+
+    #[test]
     fn test_default_values() {
         let cfg = Config::default();
         // camera
@@ -1241,7 +1326,10 @@ mod tests {
         assert_eq!(cfg.device.model, "OV5647");
         assert_eq!(cfg.device.firmware, "1.0.0");
         assert_eq!(cfg.device.hardware_id, "OV5647");
-        assert_eq!(cfg.device.serial_number, "");
+        // Empty configured serial falls back to the device-level probe
+        // (issue #43): never empty on a probeable host.
+        assert!(!cfg.device.serial_number.is_empty());
+        assert_eq!(cfg.device.serial_number, detect_device_serial());
         // logging
         assert_eq!(cfg.logging.level, "info");
         // storage (optional section, defaults)

@@ -15,6 +15,13 @@ Notable changes to MiBee Eye (Rust implementation) are documented here.
 
 ## [Unreleased]
 
+- **Device serial fallback** (issue #43): an empty `device.serial_number`
+  no longer reaches `GetDeviceInformation` — after config/env, the boot
+  probes a device-level, interface-independent identity (Raspberry Pi
+  `/proc/cpuinfo` `Serial`, else the Linux machine-id, both documented
+  locations) and logs the effective value. MACs are deliberately NOT
+  used (dual-homed boards would flip identity); probe failure keeps the
+  configured value with a warning.
 - **ONVIF Pull-Point events service** (onvif-device-rs 0.7): AI motion
   alarms now also publish as `tns1:VideoSource/MotionAlarm` while an NVR
   holds a pull-point subscription — the same accepted rising edge (edge +
