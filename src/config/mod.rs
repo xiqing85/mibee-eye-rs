@@ -250,6 +250,12 @@ pub struct ONVIFConfig {
     pub username: String,
     #[serde(default)]
     pub password: String,
+    /// Expose the Pull-Point events service and publish AI motion alarms
+    /// as `tns1:VideoSource/MotionAlarm` while an NVR holds a
+    /// subscription (onvif-device-rs 0.7 events service). Boot default
+    /// on; see `onvif_alarm`.
+    #[serde(default = "default_onvif_events_enabled")]
+    pub events_enabled: bool,
 }
 
 // GB28181 device configuration lives in the `gb28181-rs` crate. This
@@ -287,6 +293,10 @@ pub struct Gb28181Config {
 }
 
 fn default_alarm_notify_enabled() -> bool {
+    true
+}
+
+fn default_onvif_events_enabled() -> bool {
     true
 }
 
@@ -624,6 +634,7 @@ impl Default for ONVIFConfig {
             port: default_onvif_port(),
             username: default_onvif_username(),
             password: String::new(),
+            events_enabled: default_onvif_events_enabled(),
         }
     }
 }
