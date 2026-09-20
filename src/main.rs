@@ -356,7 +356,11 @@ async fn main() {
         config.device.clone(),
         config.onvif.port,
         device_ip.clone(),
-    ) {
+    )
+    // Advertise the events service exactly when its routes are served
+    // (enable_events above) — the pair must not disagree.
+    .map(|svc| svc.with_events_support(config.onvif.events_enabled))
+    {
         Ok(svc) => {
             let device_svc = Arc::new(svc);
             for action in [
