@@ -15,6 +15,17 @@ Notable changes to MiBee Eye (Rust implementation) are documented here.
 
 ## [Unreleased]
 
+- **Device-level rotation baked into the stream** (SPEC v1 appendix A
+  #19): `camera.rotation` (0 | 90 | 180 | 270, clockwise degrees) now
+  rotates the captured YUV frames before encoding — effective for every
+  consumer (RTSP, ONVIF, GB28181, recordings, snapshots, AI), with 90/270
+  swapping the announced resolution (encoder config, ONVIF Profile S,
+  `/api/status`). Applied before `hflip`/`vflip`; 180° composes into the
+  flip pass at zero extra cost. Previously this key was a display-only
+  CSS convention on the web UI — that path is retired (the frontend ships
+  in the same change). Validation: quarter turns only, and even capture
+  dimensions required for 90/270 (4:2:0 chroma re-layout). Restart to
+  apply.
 - **Device serial fallback** (issue #43): an empty `device.serial_number`
   no longer reaches `GetDeviceInformation` — after config/env, the boot
   probes a device-level, interface-independent identity (Raspberry Pi

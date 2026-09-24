@@ -214,8 +214,12 @@ pub struct CameraConfig {
     pub saturation: f64,
     #[serde(default = "default_sharpness")]
     pub sharpness: f64,
-    /// Image rotation in degrees (0 or 180). Applied via CSS transform on the web UI.
-    /// Does NOT touch V4L2 pipeline — avoids Bayer pattern corruption.
+    /// Device-level rotation in degrees clockwise (0 | 90 | 180 | 270),
+    /// baked into the captured post-ISP YUV frames before encoding —
+    /// affects every consumer (RTSP, ONVIF, GB28181, recordings,
+    /// snapshots, AI) persistently; 90/270 swap the effective stream
+    /// resolution ([`CameraConfig::effective_dims`]). Applied before
+    /// `hflip`/`vflip` (SPEC appendix A #19); restart to apply.
     #[serde(default)]
     pub rotation: u32,
     /// Device-level horizontal mirror applied to the captured YUV frames
@@ -228,6 +232,16 @@ pub struct CameraConfig {
     /// Bayer-based sensors.
     #[serde(default)]
     pub vflip: bool,
+}
+
+impl CameraConfig {
+    /// Effective stream resolution after `rotation` is baked in (SPEC
+    /// appendix A #19): 90°/270° swap width/height. Consumers that
+    /// announce dimensions (encoder config, ONVIF profiles, `/api/status`)
+    /// must use these, not the raw capture dimensions.
+    pub fn effective_dims(&self) -> (u32, u32) {
+        crate::camera::v4l2_capture::rotated_dims(self.width, self.height, self.rotation)
+    }
 }
 
 /// RTSP server settings.
@@ -800,6 +814,23 @@ impl Config {
                     self.camera.encoder
                 )));
             }
+        }
+        if !matches!(self.camera.rotation, 0 | 90 | 180 | 270) {
+            return Err(ConfigError::Validation(format!(
+                "camera.rotation must be 0, 90, 180 or 270 (degrees clockwise), got: {}",
+                self.camera.rotation
+            )));
+        }
+        if matches!(self.camera.rotation, 90 | 270)
+            && (!self.camera.width.is_multiple_of(2) || !self.camera.height.is_multiple_of(2))
+        {
+            // The 90°/270° transpose re-lays the 4:2:0 chroma planes; odd
+            // capture dimensions would desynchronize the flip pass that
+            // runs on the rotated frame (H.264 4:2:0 needs even anyway).
+            return Err(ConfigError::Validation(
+                "camera.width and camera.height must be even when camera.rotation is 90 or 270"
+                    .into(),
+            ));
         }
 
         // --- rtsp ---
@@ -1841,6 +1872,61 @@ port = 8080
     fn test_validate_ok() {
         let cfg = Config::default();
         assert!(cfg.validate().is_ok());
+    }
+
+    // ------------------------------------------------------------------
+    // Validation: rotation (SPEC appendix A #19)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_validate_rotation_accepts_quarter_turns() {
+        for rotation in [0, 90, 180, 270] {
+            let mut cfg = Config::default();
+            cfg.camera.rotation = rotation;
+            assert!(
+                cfg.validate().is_ok(),
+                "rotation {rotation} should validate"
+            );
+        }
+    }
+
+    #[test]
+    fn test_validate_rotation_rejects_non_quarter_turn() {
+        let mut cfg = Config::default();
+        cfg.camera.rotation = 45;
+        let err = cfg.validate().unwrap_err();
+        assert!(matches!(err, ConfigError::Validation(_)));
+        assert!(err.to_string().contains("camera.rotation"));
+    }
+
+    #[test]
+    fn test_validate_rotation_90_requires_even_dims() {
+        let mut cfg = Config::default();
+        cfg.camera.width = 1281;
+        cfg.camera.height = 720;
+        cfg.camera.rotation = 90;
+        let err = cfg.validate().unwrap_err();
+        assert!(matches!(err, ConfigError::Validation(_)));
+        assert!(err.to_string().contains("even"));
+
+        // 180° keeps the dimensions — odd capture dims stay acceptable
+        // there exactly as they were before rotation existed.
+        cfg.camera.rotation = 180;
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn test_effective_dims_swap_only_for_90_270() {
+        let mut cam = Config::default().camera;
+        cam.width = 640;
+        cam.height = 480;
+        assert_eq!(cam.effective_dims(), (640, 480));
+        cam.rotation = 180;
+        assert_eq!(cam.effective_dims(), (640, 480));
+        cam.rotation = 90;
+        assert_eq!(cam.effective_dims(), (480, 640));
+        cam.rotation = 270;
+        assert_eq!(cam.effective_dims(), (480, 640));
     }
 
     // ------------------------------------------------------------------

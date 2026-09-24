@@ -317,6 +317,92 @@ fn copy_row(src: &[u8], dst: &mut [u8], mirror: bool) {
     }
 }
 
+/// Resolution after baking `rotation` into the frame: 90°/270° swap the
+/// axes (SPEC appendix A #19). Values outside 0|90|180|270 are treated
+/// as 0 — config validation rejects them, this keeps the pipeline total.
+pub fn rotated_dims(width: u32, height: u32, rotation: u32) -> (u32, u32) {
+    match rotation {
+        90 | 270 => (height, width),
+        _ => (width, height),
+    }
+}
+
+/// Compose static `rotation` (SPEC appendix A #19) with per-frame flip
+/// flags (#9 order: rotate first, flips act on the rotated axes). 180°
+/// rotation is the same group element as hflip+vflip, so it folds into
+/// the flips and costs nothing extra; 90°/270° stay as a transpose.
+pub(crate) fn compose_rotation_flips(rotation: u32, hflip: bool, vflip: bool) -> (u32, bool, bool) {
+    match rotation {
+        180 => (0, !hflip, !vflip),
+        r @ (90 | 270) => (r, hflip, vflip),
+        _ => (0, hflip, vflip),
+    }
+}
+
+/// Rotate a YU12 planar frame 90° (`rotation == 90`, clockwise) or 270°
+/// (counter-clockwise). Rotation cannot happen in place, so the rotated
+/// planes are written into `scratch`, which is then swapped with `buf` —
+/// on return `buf` holds the rotated frame and the old pixels are in
+/// `scratch`. Returns the rotated dimensions. Like
+/// [`flip_yu12_in_place`], malformed (too short) buffers are left
+/// untouched. 0/180 are no-ops here (180 is handled via the flips).
+pub fn rotate_yu12(
+    buf: &mut Vec<u8>,
+    scratch: &mut Vec<u8>,
+    width: usize,
+    height: usize,
+    rotation: u32,
+) -> (usize, usize) {
+    if rotation != 90 && rotation != 270 {
+        return (width, height);
+    }
+    let clockwise = rotation == 90;
+    let y_size = width * height;
+    let c_w = width.div_ceil(2);
+    let c_h = height.div_ceil(2);
+    if width == 0 || height == 0 || buf.len() < y_size + 2 * c_w * c_h {
+        return (height, width);
+    }
+    scratch.clear();
+    scratch.resize(buf.len(), 0);
+    let planes = [
+        (0usize, width, height),
+        (y_size, c_w, c_h),
+        (y_size + c_w * c_h, c_w, c_h),
+    ];
+    for &(off, w, h) in planes.iter() {
+        transpose_plane(
+            &buf[off..off + w * h],
+            &mut scratch[off..off + w * h],
+            w,
+            h,
+            clockwise,
+        );
+    }
+    std::mem::swap(buf, scratch);
+    (height, width)
+}
+
+/// Transpose one plane (dims `pw`×`ph`) into `dst` laid out as `ph`×`pw`.
+/// Clockwise maps src(sx, sy) → dst(ph-1-sy, sx); counter-clockwise maps
+/// src(sx, sy) → dst(sy, pw-1-sx).
+fn transpose_plane(src: &[u8], dst: &mut [u8], pw: usize, ph: usize, clockwise: bool) {
+    debug_assert_eq!(src.len(), pw * ph);
+    debug_assert_eq!(dst.len(), pw * ph);
+    for sy in 0..ph {
+        let row = &src[sy * pw..(sy + 1) * pw];
+        if clockwise {
+            for (sx, &v) in row.iter().enumerate() {
+                dst[sx * ph + (ph - 1 - sy)] = v;
+            }
+        } else {
+            for (sx, &v) in row.iter().enumerate() {
+                dst[(pw - 1 - sx) * ph + sy] = v;
+            }
+        }
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // V4l2CaptureProducer
 // ─────────────────────────────────────────────────────────────────────────
@@ -344,6 +430,14 @@ pub struct V4l2CaptureProducer {
     /// shared with the encoder / snapshots / AI. Atomic so the GB
     /// FrameMirror control (A.2.3.2.9) can change them at runtime.
     flips: Arc<Flips>,
+    /// Device-level rotation (0|90|180|270 clockwise, SPEC appendix A #19),
+    /// applied before the flips on every captured frame. Boot-static:
+    /// unlike the flips there is no runtime control channel, config
+    /// changes apply on restart.
+    rotation: u32,
+    /// Scratch buffer for the 90°/270° transpose (rotation is not an
+    /// in-place transform); reused frame to frame.
+    rotate_scratch: Vec<u8>,
     /// Video watermark (SPEC §5.2) burned into every frame after the flips —
     /// same "baked into everything downstream" semantics.
     watermark: Option<crate::watermark::Watermark>,
@@ -397,6 +491,8 @@ impl V4l2CaptureProducer {
             yuv_share_interval: 15,
             frame_counter: 0,
             flips: Arc::new(Flips::default()),
+            rotation: 0,
+            rotate_scratch: Vec::new(),
             watermark: None,
         }
     }
@@ -407,6 +503,17 @@ impl V4l2CaptureProducer {
     /// the flags are read on the capture thread for each dequeued buffer.
     pub fn set_flips(&mut self, hflip: bool, vflip: bool) {
         self.flips.set(hflip, vflip);
+    }
+
+    /// Set the device-level rotation in degrees clockwise (0|90|180|270;
+    /// other values are normalized to 0 — config validation already
+    /// rejects them). Boot-static: applied to every frame from here on,
+    /// before the flips (SPEC appendix A #19).
+    pub fn set_rotation(&mut self, degrees: u32) {
+        self.rotation = match degrees {
+            90 | 180 | 270 => degrees,
+            _ => 0,
+        };
     }
 
     /// The shared flip flags — a live handle for runtime changes (GB
@@ -615,24 +722,33 @@ impl FrameProducer for V4l2CaptureProducer {
             let mut data =
                 unsafe { std::slice::from_raw_parts(ptr as *const u8, bytes_used) }.to_vec();
 
-            // Device-level flip: baked into everything downstream of the
-            // producer — encoder (RTSP/ONVIF/GB28181/recordings), web
-            // snapshots (latest_yuv) and AI inference alike.
-            let (hflip, vflip) = self.flips.load();
-            if hflip || vflip {
-                flip_yu12_in_place(
+            // Device-level transform (SPEC appendix A #9/#19): rotation
+            // first, then flips — baked into everything downstream of the
+            // producer: encoder (RTSP/ONVIF/GB28181/recordings), web
+            // snapshots (latest_yuv) and AI inference alike. 180° folds
+            // into the flip flags (compose_rotation_flips); 90°/270°
+            // transpose the frame and swap the effective dimensions.
+            let (flip_h, flip_v) = self.flips.load();
+            let (rotation, hflip, vflip) = compose_rotation_flips(self.rotation, flip_h, flip_v);
+            let (out_w, out_h) = rotated_dims(self.width, self.height, rotation);
+            if rotation == 90 || rotation == 270 {
+                rotate_yu12(
                     &mut data,
+                    &mut self.rotate_scratch,
                     self.width as usize,
                     self.height as usize,
-                    hflip,
-                    vflip,
+                    rotation,
                 );
             }
+            if hflip || vflip {
+                flip_yu12_in_place(&mut data, out_w as usize, out_h as usize, hflip, vflip);
+            }
 
-            // Watermark (SPEC §5.2): burned in after the flips, before the
-            // frame is shared — every consumer sees the same burn.
+            // Watermark (SPEC §5.2): burned in after the transforms, before
+            // the frame is shared — every consumer sees the same burn, and
+            // the text stays upright in the final (rotated) orientation.
             if let Some(watermark) = &mut self.watermark {
-                watermark.render_into(&mut data, self.width as usize, self.height as usize);
+                watermark.render_into(&mut data, out_w as usize, out_h as usize);
             }
 
             // Requeue the buffer.
@@ -651,7 +767,9 @@ impl FrameProducer for V4l2CaptureProducer {
             }
             .map_err(CameraError::Io)?;
 
-            // Share every 15th frame for web snapshots.
+            // Share every 15th frame for web snapshots (dimensions are the
+            // post-transform effective ones so YUV→RGB converters index
+            // the rotated planes correctly).
             self.frame_counter += 1;
             ::metrics::counter!("mibee_frames_captured_total").increment(1);
             if self
@@ -659,7 +777,7 @@ impl FrameProducer for V4l2CaptureProducer {
                 .is_multiple_of(self.yuv_share_interval as u64)
             {
                 if let Ok(mut guard) = self.latest_yuv.lock() {
-                    *guard = Some((self.width, self.height, data.clone()));
+                    *guard = Some((out_w, out_h, data.clone()));
                 }
             }
             return Ok(data);
@@ -770,5 +888,98 @@ mod flip_tests {
         let mut buf = vec![7u8; 10];
         flip_yu12_in_place(&mut buf, 4, 4, true, true);
         assert!(buf.iter().all(|&b| b == 7));
+    }
+}
+
+#[cfg(test)]
+mod rotate_tests {
+    use super::{compose_rotation_flips, rotate_yu12, rotated_dims};
+
+    /// 3×2 YU12 frame: Y = 1..6, U = 7..9 (2×1), V = 9..11 (2×1).
+    /// Plane sizes: y=6, chroma w=ceil(3/2)=2 × ceil(2/2)=1 → u=6..8, v=8..10.
+    fn frame_3x2() -> Vec<u8> {
+        vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    }
+
+    #[test]
+    fn rotated_dims_swap_only_for_90_270() {
+        assert_eq!(rotated_dims(640, 480, 0), (640, 480));
+        assert_eq!(rotated_dims(640, 480, 180), (640, 480));
+        assert_eq!(rotated_dims(640, 480, 90), (480, 640));
+        assert_eq!(rotated_dims(640, 480, 270), (480, 640));
+        // Out-of-enum values behave as 0 (validation rejects them upstream).
+        assert_eq!(rotated_dims(640, 480, 45), (640, 480));
+    }
+
+    #[test]
+    fn rotate90_cw_transposes_planes() {
+        // Y [[1,2,3],[4,5,6]] --cw--> [[4,1],[5,2],[6,3]]
+        // U row [7,8] --> column [7;8]; V row [9,10] --> column [9;10].
+        let mut buf = frame_3x2();
+        let mut scratch = Vec::new();
+        let (w, h) = rotate_yu12(&mut buf, &mut scratch, 3, 2, 90);
+        assert_eq!((w, h), (2, 3));
+        assert_eq!(buf[0..6], [4, 1, 5, 2, 6, 3]);
+        assert_eq!(buf[6..8], [7, 8]);
+        assert_eq!(buf[8..10], [9, 10]);
+    }
+
+    #[test]
+    fn rotate270_ccw_transposes_planes() {
+        // Y [[1,2,3],[4,5,6]] --ccw--> [[3,6],[2,5],[1,4]]
+        // U row [7,8] --> column [8;7]; V row [9,10] --> column [10;9].
+        let mut buf = frame_3x2();
+        let mut scratch = Vec::new();
+        let (w, h) = rotate_yu12(&mut buf, &mut scratch, 3, 2, 270);
+        assert_eq!((w, h), (2, 3));
+        assert_eq!(buf[0..6], [3, 6, 2, 5, 1, 4]);
+        assert_eq!(buf[6..8], [8, 7]);
+        assert_eq!(buf[8..10], [10, 9]);
+    }
+
+    #[test]
+    fn rotate270_is_inverse_of_rotate90() {
+        let original = frame_3x2();
+        let mut buf = original.clone();
+        let mut scratch = Vec::new();
+        let (w, h) = rotate_yu12(&mut buf, &mut scratch, 3, 2, 90);
+        let (w2, h2) = rotate_yu12(&mut buf, &mut scratch, w, h, 270);
+        assert_eq!((w2, h2), (3, 2));
+        assert_eq!(buf, original);
+    }
+
+    #[test]
+    fn rotate_0_and_180_are_noops_here() {
+        let mut buf = frame_3x2();
+        let mut scratch = Vec::new();
+        let (w, h) = rotate_yu12(&mut buf, &mut scratch, 3, 2, 0);
+        assert_eq!((w, h), (3, 2));
+        assert_eq!(buf, frame_3x2());
+        let (w, h) = rotate_yu12(&mut buf, &mut scratch, 3, 2, 180);
+        assert_eq!((w, h), (3, 2));
+        assert_eq!(buf, frame_3x2());
+    }
+
+    #[test]
+    fn rotate_short_buffer_left_untouched() {
+        let mut buf = vec![7u8; 4];
+        let mut scratch = Vec::new();
+        let (w, h) = rotate_yu12(&mut buf, &mut scratch, 3, 2, 90);
+        assert_eq!((w, h), (2, 3));
+        assert!(buf.iter().all(|&b| b == 7));
+    }
+
+    #[test]
+    fn compose_folds_180_into_flips() {
+        // 180° = hflip+vflip element: XOR with the runtime flags.
+        assert_eq!(compose_rotation_flips(180, false, false), (0, true, true));
+        assert_eq!(compose_rotation_flips(180, true, false), (0, false, true));
+        assert_eq!(compose_rotation_flips(180, false, true), (0, true, false));
+        assert_eq!(compose_rotation_flips(180, true, true), (0, false, false));
+        // 90°/270° pass through; flips act on the rotated axes (#19 order).
+        assert_eq!(compose_rotation_flips(90, true, false), (90, true, false));
+        assert_eq!(compose_rotation_flips(270, false, true), (270, false, true));
+        // Unknown values normalize to 0.
+        assert_eq!(compose_rotation_flips(45, true, true), (0, true, true));
     }
 }

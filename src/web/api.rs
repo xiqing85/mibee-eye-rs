@@ -154,12 +154,14 @@ pub(crate) fn err_env(status: StatusCode, msg: impl std::fmt::Display) -> EnvErr
 /// core plus its own recording / AI / GB28181 state.
 pub async fn status_handler(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     let cfg = state.config.read().await;
+    // Post-rotation effective resolution (SPEC appendix A #19).
+    let (res_w, res_h) = cfg.camera.effective_dims();
     ok_env(serde_json::json!({
         "device_name": cfg.device.name,
         "model": cfg.device.model,
         "vendor": cfg.device.manufacturer,
         "firmware": env!("CARGO_PKG_VERSION"),
-        "resolution": format!("{}x{}", cfg.camera.width, cfg.camera.height),
+        "resolution": format!("{res_w}x{res_h}"),
         "fps": cfg.camera.fps,
         "bitrate_bps": cfg.camera.bitrate,
         "uptime": state.started.elapsed().as_secs(),
@@ -242,12 +244,14 @@ pub async fn system_restart(State(state): State<Arc<AppState>>) -> Json<serde_js
 
 /// The single camera document (SPEC §4).
 fn camera_doc(state: &AppState, cfg: &Config) -> serde_json::Value {
+    // Post-rotation effective resolution (SPEC appendix A #19).
+    let (res_w, res_h) = cfg.camera.effective_dims();
     serde_json::json!({
         "id": "0",
         "name": cfg.device.name,
         "status": if state.latest_yuv.is_some() || state.au_hub.is_some() { "online" } else { "offline" },
         "camera_type": "csi",
-        "resolution": format!("{}x{}", cfg.camera.width, cfg.camera.height),
+        "resolution": format!("{res_w}x{res_h}"),
         "fps": cfg.camera.fps,
     })
 }
