@@ -390,10 +390,12 @@ async fn main() {
         onvif_server.register_anonymous_action(action);
     }
 
-    // Media service handlers
+    // Media service handlers — dimensions are the post-rotation effective
+    // ones so Profile S matches the actual stream aspect (SPEC A #19).
+    let (onvif_w, onvif_h) = config.camera.effective_dims();
     let media_cfg = Arc::new(OnvifMediaConfig {
-        camera_width: config.camera.width,
-        camera_height: config.camera.height,
+        camera_width: onvif_w,
+        camera_height: onvif_h,
         camera_fps: config.camera.fps,
         camera_bitrate: config.camera.bitrate as u32,
         rtsp_port: config.rtsp.port,
@@ -1064,9 +1066,19 @@ async fn start_camera_pipeline(
     let latest_yuv = producer.latest_yuv.clone();
 
     // Device-level flips (camera.hflip / camera.vflip) are baked into the
-    // captured frames before encoding — every consumer sees them.
+    // captured frames before encoding — every consumer sees them. Rotation
+    // (camera.rotation, SPEC appendix A #19) bakes in first; 90/270 swap
+    // the effective stream dimensions (encoder + ONVIF announcements).
     producer.set_flips(config.camera.hflip, config.camera.vflip);
+    producer.set_rotation(config.camera.rotation);
     let flips_handle = producer.flips_arc();
+    let (effective_w, effective_h) = config.camera.effective_dims();
+    if config.camera.rotation != 0 {
+        println!(
+            "camera: rotation {}° baked in — effective resolution {effective_w}x{effective_h}",
+            config.camera.rotation
+        );
+    }
 
     // Video watermark (watermark.* config, SPEC §5.2) — same bake-in point.
     // Fail-open: a broken font_path falls back to the embedded font inside
@@ -1111,10 +1123,12 @@ async fn start_camera_pipeline(
     };
     println!("camera: {note}");
 
-    // H.264 encoder configuration shared by both paths.
+    // H.264 encoder configuration shared by both paths. The encoder sees
+    // the post-rotation frame, so 90/270 swap its configured dimensions
+    // (both the M2M S_FMT and the openh264 view derive from these).
     let camera_config = CameraConfig {
-        width,
-        height,
+        width: effective_w,
+        height: effective_h,
         fps,
         bitrate_bps: bitrate,
         device_path: config.camera.encoder_device.clone(),
