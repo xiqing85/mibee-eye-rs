@@ -65,6 +65,10 @@ pub async fn stream_mse_handler(
     let Some(au_hub) = state.au_hub.as_ref().map(Arc::clone) else {
         return (StatusCode::SERVICE_UNAVAILABLE, "streaming not available").into_response();
     };
+    // The fMP4 init segment's track dims drive the browser's
+    // videoWidth/videoHeight — use the post-rotation effective
+    // resolution (SPEC appendix A #19), not a hardcoded 720p box.
+    let (init_w, init_h) = state.config.read().await.camera.effective_dims();
 
     // Subscribe with tiny buffer (2) — old frames get dropped by AuHub.
     let subscriber = au_hub.subscribe_with_capacity(2);
@@ -127,7 +131,7 @@ pub async fn stream_mse_handler(
                 let (sps, pps) = extract_sps_pps(&au);
                 match (sps, pps) {
                     (Some(s), Some(p)) => {
-                        let init = fmp4::build_init_segment(&s, &p, 1280, 720);
+                        let init = fmp4::build_init_segment(&s, &p, init_w, init_h);
                         initialized = true;
                         yield Ok::<_, std::convert::Infallible>(init);
                     }
