@@ -126,6 +126,47 @@ enum EncodedEvent {
     Error(CameraError),
 }
 
+/// Writes a contiguous I420 frame (`data`, w×h, luma stride = w) into
+/// `buf` using the driver-negotiated luma `stride`. bcm2835 pads the
+/// OUTPUT bytesperline to ALIGN(width, 64) whatever was requested; the
+/// padded layout is Y rows @stride, U at stride*h with stride/2, V at
+/// stride*h + stride/2*h/2 — total stride*h*3/2, matching the
+/// negotiated sizeimage. Returns the bytes written, or `None` when
+/// `buf` cannot hold the padded frame.
+fn fill_padded_i420(buf: &mut [u8], data: &[u8], w: u32, h: u32, stride: u32) -> Option<usize> {
+    if stride == w {
+        if buf.len() < data.len() {
+            return None;
+        }
+        buf[..data.len()].copy_from_slice(data);
+        return Some(data.len());
+    }
+    let (w, h, stride) = (w as usize, h as usize, stride as usize);
+    let cstride = stride / 2;
+    let u_off = stride * h;
+    let v_off = u_off + cstride * (h / 2);
+    let total = v_off + cstride * (h / 2);
+    if buf.len() < total || data.len() < w * h * 3 / 2 {
+        return None;
+    }
+    for row in 0..h {
+        buf[row * stride..row * stride + w].copy_from_slice(&data[row * w..row * w + w]);
+    }
+    let src_u = w * h;
+    for row in 0..h / 2 {
+        let d = u_off + row * cstride;
+        let s = src_u + row * (w / 2);
+        buf[d..d + w / 2].copy_from_slice(&data[s..s + w / 2]);
+    }
+    let src_v = src_u + (w / 2) * (h / 2);
+    for row in 0..h / 2 {
+        let d = v_off + row * cstride;
+        let s = src_v + row * (w / 2);
+        buf[d..d + w / 2].copy_from_slice(&data[s..s + w / 2]);
+    }
+    Some(total)
+}
+
 impl<P: FrameProducer> V4l2CameraSource<P> {
     /// Create a new V4L2 M2M camera source.
     ///
@@ -313,10 +354,8 @@ impl<P: FrameProducer> V4l2CameraSource<P> {
                 //         dropped. The closure borrows `yuv_data` which lives
                 //         on the stack of this loop iteration.
                 if let Err(err) = encoder.encode(
-                    shiguredo_v4l2::v4l2_m2m::EncodeInput::Mmap(&mut |buf, _res, _user_data| {
-                        let len = yuv_data.len().min(buf.len());
-                        buf[..len].copy_from_slice(&yuv_data[..len]);
-                        Some(len)
+                    shiguredo_v4l2::v4l2_m2m::EncodeInput::Mmap(&mut |buf, res, _user_data| {
+                        fill_padded_i420(buf, &yuv_data, res.width, res.height, res.stride)
                     }),
                     timestamp_us,
                     force_kf,
@@ -718,5 +757,50 @@ mod tests {
         assert!(w > 0);
         assert!(h > 0);
         assert_eq!(producer.fps(), 30);
+    }
+
+    // ── Padded-stride encoder input layout ────────────────────────────────
+    // bcm2835 negotiates OUTPUT bytesperline = ALIGN(width, 64) whatever we
+    // request (verified on hardware: 720 -> 768). A contiguous frame read
+    // at the padded stride garbles every row past the first — the 90°/270°
+    // rotation cases, where width is 720.
+
+    fn contiguous_frame_4x2() -> Vec<u8> {
+        vec![
+            1, 2, 3, 4, // Y row 0
+            5, 6, 7, 8, // Y row 1
+            0x10, 0x11, // U
+            0x20, 0x21, // V
+        ]
+    }
+
+    #[test]
+    fn fill_padded_i420_pads_rows() {
+        // stride 6: Y rows @6, U at offset 12 stride 3, V at 15, total 18.
+        let want = vec![
+            1, 2, 3, 4, 0, 0, //
+            5, 6, 7, 8, 0, 0, //
+            0x10, 0x11, 0, //
+            0x20, 0x21, 0,
+        ];
+        let mut dst = vec![0u8; want.len()];
+        let n = fill_padded_i420(&mut dst, &contiguous_frame_4x2(), 4, 2, 6).unwrap();
+        assert_eq!(n, want.len());
+        assert_eq!(dst, want);
+    }
+
+    #[test]
+    fn fill_padded_i420_unpadded_stride_is_verbatim_copy() {
+        let src = contiguous_frame_4x2();
+        let mut dst = vec![0u8; src.len()];
+        let n = fill_padded_i420(&mut dst, &src, 4, 2, 4).unwrap();
+        assert_eq!(n, src.len());
+        assert_eq!(dst, src);
+    }
+
+    #[test]
+    fn fill_padded_i420_rejects_short_buffer() {
+        let mut dst = vec![0u8; 6 * 2 * 3 / 2 - 1];
+        assert!(fill_padded_i420(&mut dst, &contiguous_frame_4x2(), 4, 2, 6).is_none());
     }
 }
