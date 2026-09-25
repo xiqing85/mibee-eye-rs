@@ -15,6 +15,12 @@ Notable changes to MiBee Eye (Rust implementation) are documented here.
 
 ## [Unreleased]
 
+- **MSE init segment carries the real (post-rotation) resolution**: the
+  fMP4 init segment's track dimensions were hardcoded 1280x720, so the
+  browser reported `videoWidth/videoHeight` of a landscape box even for
+  rotated (portrait) streams — playback worked but every consumer of the
+  element's dimensions (UI layout, canvas overlays, tests) saw the wrong
+  geometry. The init segment now uses `camera.effective_dims()`.
 - **Device-level rotation baked into the stream** (SPEC v1 appendix A
   #19): `camera.rotation` (0 | 90 | 180 | 270, clockwise degrees) now
   rotates the captured YUV frames before encoding — effective for every
