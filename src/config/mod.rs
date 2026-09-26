@@ -94,6 +94,90 @@ fn default_saturation() -> f64 {
 fn default_sharpness() -> f64 {
     1.0
 }
+fn default_substream_enabled() -> bool {
+    false
+}
+fn default_substream_width() -> u32 {
+    640
+}
+fn default_substream_height() -> u32 {
+    360
+}
+fn default_substream_bitrate() -> u32 {
+    400_000
+}
+
+/// Bandwidth-saving low-resolution substream (`[camera.substream]`,
+/// SPEC appendix A #20). The substream is a second H.264 encode of the
+/// main capture frames (after rotation/flips/watermark bake in),
+/// advertised as the `sub` ONVIF profile and the RTSP `/sub` mount;
+/// recording, GB28181 and AI stay on the main stream. Restart to apply.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SubstreamConfig {
+    #[serde(default = "default_substream_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_substream_width")]
+    pub width: u32,
+    #[serde(default = "default_substream_height")]
+    pub height: u32,
+    /// Sub target frame rate; `0` follows the main `camera.fps`.
+    #[serde(default)]
+    pub fps: u32,
+    #[serde(default = "default_substream_bitrate")]
+    pub bitrate: u32,
+}
+
+impl Default for SubstreamConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_substream_enabled(),
+            width: default_substream_width(),
+            height: default_substream_height(),
+            fps: 0,
+            bitrate: default_substream_bitrate(),
+        }
+    }
+}
+
+impl SubstreamConfig {
+    /// Effective sub frame rate (`fps == 0` follows `main_fps`).
+    #[must_use]
+    pub fn effective_fps(&self, main_fps: u32) -> u32 {
+        if self.fps == 0 {
+            main_fps
+        } else {
+            self.fps
+        }
+    }
+
+    /// Structural validation: positive, even dimensions (I420 chroma
+    /// planes) and a sane bitrate. Returns a human-readable reason.
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.enabled {
+            return Ok(());
+        }
+        if self.width == 0 || self.height == 0 {
+            return Err("substream width/height must be positive".to_string());
+        }
+        if !self.width.is_multiple_of(2) || !self.height.is_multiple_of(2) {
+            return Err(format!(
+                "substream dimensions must be even (I420 chroma), got {}x{}",
+                self.width, self.height
+            ));
+        }
+        if self.width > 7680 || self.height > 4320 {
+            return Err("substream dimensions exceed 7680x4320".to_string());
+        }
+        if self.bitrate == 0 || self.bitrate > 50_000_000 {
+            return Err(format!(
+                "substream bitrate must be 1..50000000, got {}",
+                self.bitrate
+            ));
+        }
+        Ok(())
+    }
+}
 fn default_rtsp_port() -> u16 {
     8554
 }
@@ -232,6 +316,11 @@ pub struct CameraConfig {
     /// Bayer-based sensors.
     #[serde(default)]
     pub vflip: bool,
+    /// Bandwidth-saving low-resolution substream (SPEC appendix A #20).
+    /// Disabled by default — the main stream, recordings, ONVIF primary
+    /// profile and GB28181 are unaffected either way.
+    #[serde(default)]
+    pub substream: SubstreamConfig,
 }
 
 impl CameraConfig {
@@ -628,6 +717,7 @@ impl Default for CameraConfig {
             rotation: 0,
             hflip: false,
             vflip: false,
+            substream: SubstreamConfig::default(),
         }
     }
 }
@@ -753,6 +843,11 @@ impl Config {
     /// Returns `ConfigError::Validation` if any constraint is violated.
     pub fn validate(&self) -> Result<(), ConfigError> {
         // --- camera ---
+        if let Err(reason) = self.camera.substream.validate() {
+            return Err(ConfigError::Validation(format!(
+                "camera.substream: {reason}"
+            )));
+        }
         if self.camera.fps == 0 {
             return Err(ConfigError::Validation(
                 "camera.fps must be positive".into(),
@@ -1913,6 +2008,71 @@ port = 8080
         // there exactly as they were before rotation existed.
         cfg.camera.rotation = 180;
         assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn test_substream_defaults_disabled() {
+        let cfg = Config::default();
+        assert!(!cfg.camera.substream.enabled);
+        assert_eq!(cfg.camera.substream.width, 640);
+        assert_eq!(cfg.camera.substream.height, 360);
+        assert_eq!(cfg.camera.substream.fps, 0);
+        assert_eq!(cfg.camera.substream.bitrate, 400_000);
+        // Disabled config passes validation regardless of geometry.
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn test_substream_parses_toml_section() {
+        let cfg: Config = toml::from_str(
+            r#"
+[camera]
+width = 1280
+height = 720
+fps = 15
+
+[camera.substream]
+enabled = true
+width = 480
+height = 270
+fps = 5
+bitrate = 250000
+"#,
+        )
+        .unwrap();
+        assert!(cfg.camera.substream.enabled);
+        assert_eq!(cfg.camera.substream.width, 480);
+        assert_eq!(cfg.camera.substream.height, 270);
+        assert_eq!(cfg.camera.substream.effective_fps(15), 5);
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn test_substream_effective_fps_follows_main_when_zero() {
+        let mut cfg = Config::default();
+        cfg.camera.substream.enabled = true;
+        assert_eq!(cfg.camera.substream.effective_fps(15), 15);
+    }
+
+    #[test]
+    fn test_substream_rejects_odd_dimensions() {
+        let mut cfg = Config::default();
+        cfg.camera.substream.enabled = true;
+        cfg.camera.substream.width = 641;
+        cfg.camera.substream.height = 360;
+        let err = cfg.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("substream"),
+            "error must name the substream section: {err}"
+        );
+    }
+
+    #[test]
+    fn test_substream_rejects_zero_bitrate_when_enabled() {
+        let mut cfg = Config::default();
+        cfg.camera.substream.enabled = true;
+        cfg.camera.substream.bitrate = 0;
+        assert!(cfg.validate().is_err());
     }
 
     #[test]

@@ -81,6 +81,33 @@ saturation = 1.0
 sharpness = 1.0
 
 # --------------------------------------------------------------------------
+# Low-resolution bandwidth-saving substream (SPEC appendix A #20)
+# --------------------------------------------------------------------------
+# A second H.264 encode of the (already rotated/flipped/watermarked) capture
+# frames at reduced resolution/bitrate. Exposed as:
+#   - RTSP  mount /sub          (rtsp://<host>:8554/sub)
+#   - ONVIF profile token "sub" (GetStreamUri routes by ProfileToken)
+#   - Web    /api/cameras/0/stream.sub.mse  (capabilities.substream = true)
+# The main stream, recording, GB28181 and AI stay on the main encode.
+# Restart to apply. Dimensions must be even and <= the effective (post-
+# rotation) camera resolution; fps = 0 follows camera.fps.
+[camera.substream]
+# type: bool  |  default: false
+enabled = false
+
+# type: integer  |  default: 640
+width = 640
+
+# type: integer  |  default: 360
+height = 360
+
+# type: integer  |  default: 0 (= follow camera.fps)
+fps = 0
+
+# type: integer  |  default: 400000
+bitrate = 400000
+
+# --------------------------------------------------------------------------
 # RTSP server settings
 # --------------------------------------------------------------------------
 [rtsp]
