@@ -123,7 +123,30 @@ pub async fn stream_mse_handler(
     // videoWidth/videoHeight — use the post-rotation effective
     // resolution (SPEC appendix A #19), not a hardcoded 720p box.
     let (init_w, init_h) = state.config.read().await.camera.effective_dims();
+    mse_response(au_hub, init_w, init_h).await
+}
 
+/// Axum handler for `GET /api/cameras/{id}/stream.sub.mse` — the
+/// bandwidth-saving low-resolution substream (SPEC appendix A #20).
+/// 404 unless the substream pipeline is actually running
+/// (`capabilities.substream`).
+pub async fn stream_sub_mse_handler(
+    Path(id): Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> Response {
+    if id != "0" {
+        return (StatusCode::NOT_FOUND, "no such camera").into_response();
+    }
+    let Some(sub_hub) = state.sub_au_hub.as_ref().map(Arc::clone) else {
+        return (StatusCode::NOT_FOUND, "substream not enabled").into_response();
+    };
+    let cam = state.config.read().await.camera.clone();
+    let (init_w, init_h) = (cam.substream.width, cam.substream.height);
+    mse_response(sub_hub, init_w, init_h).await
+}
+
+/// Shared chunked-fMP4 body for both MSE endpoints.
+async fn mse_response(au_hub: Arc<crate::h264::hub::AuHub>, init_w: u32, init_h: u32) -> Response {
     // Subscribe with tiny buffer (2) — old frames get dropped by AuHub.
     let subscriber = au_hub.subscribe_with_capacity(2);
     let sub_id = subscriber.id;
@@ -479,6 +502,69 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_stream_sub_mse_404_when_not_enabled() {
+        // Even with a main hub present, the sub endpoint must 404 unless
+        // the substream pipeline wired its own hub (SPEC appendix A #20).
+        let st = Arc::new(AppState {
+            au_hub: Some(Arc::new(AuHub::new())),
+            ..AppState::default()
+        });
+        let app = Router::new()
+            .route(
+                "/api/cameras/:id/stream.sub.mse",
+                axum::routing::get(stream_sub_mse_handler),
+            )
+            .with_state(st);
+        let resp = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/cameras/0/stream.sub.mse")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_stream_sub_mse_serves_sub_hub_frames() {
+        let hub = Arc::new(AuHub::new());
+        let st = Arc::new(AppState {
+            sub_au_hub: Some(hub.clone()),
+            ..AppState::default()
+        });
+        let app = Router::new()
+            .route(
+                "/api/cameras/:id/stream.sub.mse",
+                axum::routing::get(stream_sub_mse_handler),
+            )
+            .with_state(st);
+
+        let resp = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/cameras/0/stream.sub.mse")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.headers().get("content-type").unwrap(), "video/mp4");
+
+        let mut body = resp.into_body().into_data_stream();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        hub.write(au(true));
+        let init = tokio::time::timeout(Duration::from_secs(3), body.next())
+            .await
+            .expect("init segment timeout")
+            .expect("stream ended")
+            .expect("stream error");
+        assert!(init.windows(4).any(|w| w == b"ftyp"));
     }
 
     #[tokio::test]

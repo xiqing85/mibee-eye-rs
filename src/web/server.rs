@@ -14,7 +14,7 @@ use tokio::net::TcpListener;
 use super::embedded;
 use super::error::WebError;
 use super::metrics::{self, AppMetrics};
-use super::video_stream::stream_mse_handler;
+use super::video_stream::{stream_mse_handler, stream_sub_mse_handler};
 use std::sync::Arc;
 
 use super::api;
@@ -27,6 +27,7 @@ pub struct WebServer {
     latest_yuv: Option<api::SharedYuvFrame>,
     /// H.264 AU hub for WebSocket video streaming.
     au_hub: Option<Arc<crate::h264::hub::AuHub>>,
+    sub_au_hub: Option<Arc<crate::h264::hub::AuHub>>,
     /// Latest AI detection results.
     last_detections: Option<Arc<tokio::sync::RwLock<Vec<crate::features::ai::Detection>>>>,
     /// Name of the ACTIVE AI detector (mock or ONNX), reported by
@@ -57,6 +58,7 @@ impl WebServer {
             enabled: config.enabled,
             latest_yuv: None,
             au_hub: None,
+            sub_au_hub: None,
             last_detections: None,
             ai_model: None,
             ai_module: None,
@@ -84,6 +86,10 @@ impl WebServer {
 
     pub fn with_au_hub(mut self, hub: Arc<crate::h264::hub::AuHub>) -> Self {
         self.au_hub = Some(hub);
+        self
+    }
+    pub fn with_sub_au_hub(mut self, hub: Arc<crate::h264::hub::AuHub>) -> Self {
+        self.sub_au_hub = Some(hub);
         self
     }
 
@@ -164,6 +170,10 @@ impl WebServer {
             .route("/api/cameras/:id/live", get(api::live_handler))
             .route("/api/cameras/:id/stream.mse", get(stream_mse_handler))
             .route(
+                "/api/cameras/:id/stream.sub.mse",
+                get(stream_sub_mse_handler),
+            )
+            .route(
                 "/api/cameras/:id/recording",
                 get(api::recording_status).post(api::recording_set),
             )
@@ -236,6 +246,7 @@ impl WebServer {
             ptz: tokio::sync::RwLock::new(api::PtzStatus::default()),
             latest_yuv: self.latest_yuv.clone(),
             au_hub: self.au_hub.clone(),
+            sub_au_hub: self.sub_au_hub.clone(),
             last_detections: self.last_detections.clone(),
             ai_model: self.ai_model.clone(),
             ai_module: self.ai_module.clone(),
