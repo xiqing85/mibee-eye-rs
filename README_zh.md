@@ -226,6 +226,7 @@ cp config.example.toml config.toml
 | `[camera]` | `width` / `height` | 1280×720 | 采集分辨率 |
 | `[camera]` | `fps` | 15 | 帧率 |
 | `[camera]` | `bitrate` | 2000000 | 目标码率（bps） |
+| `[camera.substream]` | `enabled` | `false` | 低分辨率省流子码流（640×360@15、400 kbps）：对主采集帧降采样后的第二路编码 —— RTSP `/sub` 挂载 + ONVIF `sub` Profile + Web `stream.sub.mse`；主码流、录像与 GB28181 仍走主编码 |
 | `[rtsp]` | `port` | 8554 | RTSP 端口 |
 | `[rtmp]` | `enabled` / `url` | `false` / — | 推流到 RTMP 服务 |
 | `[onvif]` | `port` | 8080 | ONVIF SOAP/HTTP 端口 |

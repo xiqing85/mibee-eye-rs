@@ -9,6 +9,7 @@ use mibee_eye_raspi_rs::camera::source::{
     CameraConfig, CameraSource, FrameType, H264Level, H264Profile,
 };
 #[cfg(feature = "v4l2-encoder")]
+use mibee_eye_raspi_rs::camera::substream::{SubFrameProducer, TappingFrameProducer, TAP_CAPACITY};
 use mibee_eye_raspi_rs::camera::v4l2::V4l2CameraSource;
 use mibee_eye_raspi_rs::camera::v4l2_capture::V4l2CaptureProducer;
 use mibee_eye_raspi_rs::config::Config;
@@ -23,7 +24,7 @@ use mibee_eye_raspi_rs::onvif::device::{DeviceHandler, DeviceServiceHandlers};
 use mibee_eye_raspi_rs::onvif::discovery::DiscoveryServer;
 use mibee_eye_raspi_rs::onvif::media::{
     GetProfilesHandler, GetSnapshotUriHandler, GetStreamUriHandler, GetVideoSourcesHandler,
-    OnvifMediaConfig, VideoEncoding,
+    MediaProfileConfig, OnvifMediaConfig, VideoEncoding,
 };
 use mibee_eye_raspi_rs::onvif::ptz::PtzHandler;
 use mibee_eye_raspi_rs::onvif::server::{OnvifConfig, OnvifServer};
@@ -187,10 +188,15 @@ async fn main() {
     let mut gb_flips: Option<Arc<mibee_eye_raspi_rs::camera::v4l2_capture::Flips>> = None;
     let mut au_hub_for_web: Option<Arc<mibee_eye_raspi_rs::h264::hub::AuHub>> = None;
     let mut au_hub: Option<Arc<mibee_eye_raspi_rs::h264::hub::AuHub>> = None;
+    // Substream geometry (w, h, fps, bitrate) once its pipeline actually
+    // started — feeds the ONVIF extra profile and gates the web capability.
+    let mut sub_profile: Option<(u32, u32, u32, u32)> = None;
+    let mut sub_hub_for_web: Option<Arc<mibee_eye_raspi_rs::h264::hub::AuHub>> = None;
     match RtspServer::new(rtsp_config).await {
         Ok(server) => {
             // Clone the AuHub before moving the server into its task.
             let au_hub_internal = server.au_hub().clone();
+            let sub_hub_internal = server.sub_au_hub().clone();
             au_hub = Some(au_hub_internal.clone());
             au_hub_for_web = Some(au_hub_internal.clone());
             println!("rtsp: listening on :{}", config.rtsp.port);
@@ -200,11 +206,25 @@ async fn main() {
                 }
             });
 
-            if let Some((yuv, flips)) =
-                start_camera_pipeline(&config, au_hub_internal, Arc::clone(&idr_flag)).await
+            let sub_hub_for_pipeline = if config.camera.substream.enabled {
+                Some(sub_hub_internal.clone())
+            } else {
+                None
+            };
+            if let Some((yuv, flips, sub)) = start_camera_pipeline(
+                &config,
+                au_hub_internal,
+                sub_hub_for_pipeline,
+                Arc::clone(&idr_flag),
+            )
+            .await
             {
                 latest_yuv = Some(yuv);
                 gb_flips = Some(flips);
+                if sub.is_some() {
+                    sub_profile = sub;
+                    sub_hub_for_web = Some(sub_hub_internal);
+                }
             }
         }
         Err(e) => eprintln!("rtsp: failed to bind :{} â {e}", config.rtsp.port),
@@ -409,6 +429,14 @@ async fn main() {
         encoder_token: "enc0".to_string(),
         encoding: VideoEncoding::H264,
         video_source_name: "Video Source".to_string(),
+        // Low-bandwidth substream (SPEC appendix A #20): advertised only
+        // when the sub pipeline actually started; GetStreamUri maps its
+        // `sub` token to the RTSP /sub mount.
+        extra_profiles: sub_profile
+            .map(|(w, h, fps, bitrate)| {
+                vec![MediaProfileConfig::new("sub", w, h, fps, bitrate, "/sub")]
+            })
+            .unwrap_or_default(),
     });
     onvif_server.register_handler(
         "GetProfiles",
@@ -794,6 +822,9 @@ async fn main() {
     if let Some(ref hub) = au_hub_for_web {
         web = web.with_au_hub(hub.clone());
     }
+    if let Some(ref hub) = sub_hub_for_web {
+        web = web.with_sub_au_hub(hub.clone());
+    }
     if let Some(detections) = ai_last_detections {
         web = web.with_latest_detections(detections);
     }
@@ -1049,10 +1080,12 @@ fn spawn_ai_event_bridge(event_bus: Option<EventBus>) {
 async fn start_camera_pipeline(
     config: &Config,
     au_hub: Arc<mibee_eye_raspi_rs::h264::hub::AuHub>,
+    sub_au_hub: Option<Arc<mibee_eye_raspi_rs::h264::hub::AuHub>>,
     idr_flag: Arc<std::sync::atomic::AtomicBool>,
 ) -> Option<(
     mibee_eye_raspi_rs::camera::v4l2_capture::LatestYuv,
     Arc<mibee_eye_raspi_rs::camera::v4l2_capture::Flips>,
+    Option<(u32, u32, u32, u32)>,
 )> {
     let device = config.camera.device.clone();
     let width = config.camera.width;
@@ -1137,6 +1170,19 @@ async fn start_camera_pipeline(
         i_period: fps * 2, // IDR every 2 seconds
     };
 
+    // Substream tap (SPEC appendix A #20): clone main capture frames into
+    // a bounded channel for the downscaled second encode. Fail-open on the
+    // tap — a slow or dead sub pipeline never stalls the main stream.
+    let sub_settings = &config.camera.substream;
+    let sub_requested = sub_au_hub.is_some();
+    let (tap_tx, tap_rx) = if sub_requested {
+        let (tx, rx) = std::sync::mpsc::sync_channel(TAP_CAPACITY);
+        (Some(tx), Some(rx))
+    } else {
+        (None, None)
+    };
+    let producer = TappingFrameProducer::new(producer, tap_tx);
+
     let mut camera: Box<dyn CameraSource> = match selection {
         SelectedEncoder::Hardware => {
             #[cfg(feature = "v4l2-encoder")]
@@ -1170,6 +1216,104 @@ async fn start_camera_pipeline(
         }
     }
 
+    // --- Substream pipeline (SPEC appendix A #20) ---
+    // Second encoder session fed by the downscaled tap; the geometry is
+    // reported back for the ONVIF `sub` profile and the web capability.
+    let mut sub_onvif: Option<(u32, u32, u32, u32)> = None;
+    if let (Some(sub_hub), Some(tap_rx)) = (sub_au_hub, tap_rx) {
+        if sub_settings.width > effective_w || sub_settings.height > effective_h {
+            eprintln!(
+                "substream: {}x{} exceeds effective {}x{} — disabled (downscaler never upscales)",
+                sub_settings.width, sub_settings.height, effective_w, effective_h
+            );
+        } else {
+            let sub_fps = sub_settings.effective_fps(fps);
+            let sub_config = CameraConfig {
+                width: sub_settings.width,
+                height: sub_settings.height,
+                fps: sub_fps,
+                bitrate_bps: sub_settings.bitrate,
+                device_path: config.camera.encoder_device.clone(),
+                profile: H264Profile::High,
+                level: H264Level::Level4_0,
+                i_period: sub_fps * 2, // IDR every 2 seconds of sub-rate video
+            };
+            let sub_producer = SubFrameProducer::new(
+                tap_rx,
+                effective_w,
+                effective_h,
+                sub_settings.width,
+                sub_settings.height,
+                fps,
+                sub_fps,
+            );
+            let mut sub_camera: Box<dyn CameraSource> = match selection {
+                SelectedEncoder::Hardware => {
+                    #[cfg(feature = "v4l2-encoder")]
+                    {
+                        Box::new(V4l2CameraSource::new(sub_config, sub_producer))
+                    }
+                    #[cfg(not(feature = "v4l2-encoder"))]
+                    {
+                        unreachable!("hardware encoder selected in a software-only build")
+                    }
+                }
+                SelectedEncoder::Software => {
+                    #[cfg(feature = "software-encoder")]
+                    {
+                        Box::new(SoftwareCameraSource::new(sub_config, sub_producer))
+                    }
+                    #[cfg(not(feature = "software-encoder"))]
+                    {
+                        let _ = sub_config;
+                        unreachable!("software encoder selected in a hardware-only build")
+                    }
+                }
+            };
+            match sub_camera.start().await {
+                Ok(()) => {
+                    println!(
+                        "substream: H.264 sub encoder started ({}x{}@{}, {}bps — RTSP /sub, ONVIF profile sub)",
+                        sub_settings.width, sub_settings.height, sub_fps, sub_settings.bitrate
+                    );
+                    sub_onvif = Some((
+                        sub_settings.width,
+                        sub_settings.height,
+                        sub_fps,
+                        sub_settings.bitrate,
+                    ));
+                    tokio::spawn(async move {
+                        loop {
+                            match sub_camera.next_frame().await {
+                                Ok(frame) => {
+                                    if frame.frame_type != FrameType::H264AnnexB {
+                                        continue;
+                                    }
+                                    let nalus = Parser::parse(&frame.data);
+                                    if nalus.is_empty() {
+                                        continue;
+                                    }
+                                    let au = AccessUnit {
+                                        nalus,
+                                        timestamp: Instant::now(),
+                                        is_key_frame: frame.is_key_frame,
+                                    };
+                                    sub_hub.write(au);
+                                }
+                                Err(e) => {
+                                    eprintln!("substream: {e}");
+                                    tokio::time::sleep(Duration::from_secs(1)).await;
+                                }
+                            }
+                        }
+                    });
+                }
+                Err(e) => eprintln!(
+                    "substream: encoder failed to start — continuing without substream ({e})"
+                ),
+            }
+        }
+    }
     // Spawn the capture â AuHub pump.
     tokio::spawn(async move {
         println!("camera: streaming to RTSP AuHub");
@@ -1208,7 +1352,7 @@ async fn start_camera_pipeline(
         }
     });
 
-    Some((latest_yuv, flips_handle))
+    Some((latest_yuv, flips_handle, sub_onvif))
 }
 
 /// Resolve the configuration file path.

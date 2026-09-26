@@ -33,6 +33,10 @@ pub struct AppState {
     pub latest_yuv: Option<SharedYuvFrame>,
     /// H.264 access unit hub for fMP4 streaming.
     pub au_hub: Option<Arc<crate::h264::hub::AuHub>>,
+    /// Substream H.264 hub (SPEC appendix A #20) — set only when the
+    /// substream pipeline actually started; gates the `substream`
+    /// capability and the `/stream.sub.mse` endpoint.
+    pub sub_au_hub: Option<Arc<crate::h264::hub::AuHub>>,
     /// Latest AI detection results (for /api/detections).
     pub last_detections: Option<Arc<RwLock<Vec<Detection>>>>,
     /// Name of the ACTIVE detector (e.g. "mock-detector-v1" or the ONNX
@@ -89,6 +93,7 @@ impl Default for AppState {
             ptz: RwLock::new(PtzStatus::default()),
             latest_yuv: None,
             au_hub: None,
+            sub_au_hub: None,
             last_detections: None,
             ai_model: None,
             ai_module: None,
@@ -213,6 +218,7 @@ pub async fn capabilities_handler(State(state): State<Arc<AppState>>) -> Json<se
         "devices": false,
         "mjpeg": state.latest_yuv.is_some(),
         "mse": state.au_hub.is_some(),
+        "substream": state.sub_au_hub.is_some(),
         "webrtc": false,
         "events": events,
         "config_apply": {"default": "restart", "sections": {"recording": "restart", "watermark": "restart"}},
@@ -1961,6 +1967,10 @@ mod tests {
         assert_eq!(data["imaging"], false);
         assert_eq!(data["ptz"], true);
         assert_eq!(data["mse"], false, "no AuHub in test state");
+        assert_eq!(
+            data["substream"], false,
+            "substream capability follows the sub hub (absent in test state)"
+        );
         assert!(data["events"].is_array());
     }
 

@@ -15,6 +15,17 @@ Notable changes to MiBee Eye (Rust implementation) are documented here.
 
 ## [Unreleased]
 
+- **Low-resolution bandwidth-saving substream** (`[camera.substream]`,
+  SPEC appendix A #20, default off): a second H.264 encoder session fed
+  by the downscaled main capture (640x360@15 / 400 kbps defaults; both
+  hardware V4L2 M2M and openh264 paths) — RTSP `/sub` mount, ONVIF `sub`
+  profile (GetStreamUri routes by ProfileToken via onvif-device-rs
+  multi-profile support, git pin 1826726), web
+  `/api/cameras/0/stream.sub.mse` + `capabilities.substream`. Rotation,
+  flips and the watermark are already baked into the tapped frames, so
+  the substream inherits them. Main stream, recording, GB28181 and AI
+  are untouched; the tap is bounded and drop-on-full (a stalled sub
+  encoder never stalls the main pipeline).
 - **MSE init segment carries the real (post-rotation) resolution**: the
   fMP4 init segment's track dimensions were hardcoded 1280x720, so the
   browser reported `videoWidth/videoHeight` of a landscape box even for

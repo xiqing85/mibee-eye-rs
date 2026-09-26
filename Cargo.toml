@@ -42,7 +42,7 @@ env_logger = "0.11"
 gb28181-rs = "0.12.0"
 # ONVIF Device stack (extracted library) — v0.7.0 ships the quick-xml
 # 0.41 security migration plus the parity batch the git pin tracked.
-onvif-device-rs = "0.7.0"
+onvif-device-rs = { git = "https://github.com/mickeyzzc/onvif-rs.git", rev = "1826726" }
 anyhow = "1"
 # AI inference (ONNX Runtime) — optional, behind `ai` feature
 # load-dynamic: no C++ linking at compile time; libonnxruntime.so loaded at runtime via ORT_DYLIB_PATH

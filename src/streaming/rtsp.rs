@@ -107,6 +107,10 @@ pub struct Session {
     rtp_channel: u8,
     rtcp_channel: u8,
     is_playing: bool,
+    /// Which mounted stream this session plays (resolved from the SETUP
+    /// URL; SPEC appendix A #20). Drives both the AuHub subscription and
+    /// the SPS/PPS cache used for SDP and key-frame injection.
+    mount: StreamMount,
     ssrc: u32,
     seq: Arc<AtomicU16>,
     base_time: Instant,
@@ -123,6 +127,7 @@ impl Clone for Session {
             rtp_channel: self.rtp_channel,
             rtcp_channel: self.rtcp_channel,
             is_playing: self.is_playing,
+            mount: self.mount,
             ssrc: self.ssrc,
             seq: self.seq.clone(),
             base_time: self.base_time,
@@ -134,11 +139,84 @@ impl Clone for Session {
     }
 }
 
+/// Which mounted stream a request or session targets.
+///
+/// Fail-open by design: anything that is not the `/sub` path segment
+/// resolves to [`StreamMount::Main`], so legacy clients that pass
+/// arbitrary URLs keep receiving the main stream exactly as before the
+/// substream mount existed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StreamMount {
+    #[default]
+    Main,
+    Sub,
+}
+
+impl StreamMount {
+    /// Resolve the mount from a request URL: an exact `/sub` path
+    /// segment selects the substream; everything else (including query
+    /// strings and unknown paths) resolves to the main stream.
+    #[must_use]
+    pub fn from_url(url: &str) -> Self {
+        let path = url.split('?').next().unwrap_or(url);
+        if path.split('/').any(|seg| seg.eq_ignore_ascii_case("sub")) {
+            Self::Sub
+        } else {
+            Self::Main
+        }
+    }
+}
+
 /// Shared server state protected by a mutex.
 pub struct Inner {
     sessions: HashMap<String, Session>,
     sps: Option<Vec<u8>>,
     pps: Option<Vec<u8>>,
+    /// Parameter sets for the `/sub` mount — a different encoder session
+    /// produces them, so they must never mix into the main mount's SDP or
+    /// key-frame injection.
+    sub_sps: Option<Vec<u8>>,
+    sub_pps: Option<Vec<u8>>,
+}
+
+impl Inner {
+    fn new() -> Self {
+        Self {
+            sessions: HashMap::new(),
+            sps: None,
+            pps: None,
+            sub_sps: None,
+            sub_pps: None,
+        }
+    }
+
+    fn sps_for(&self, mount: StreamMount) -> Option<&Vec<u8>> {
+        match mount {
+            StreamMount::Main => self.sps.as_ref(),
+            StreamMount::Sub => self.sub_sps.as_ref(),
+        }
+    }
+
+    fn pps_for(&self, mount: StreamMount) -> Option<&Vec<u8>> {
+        match mount {
+            StreamMount::Main => self.pps.as_ref(),
+            StreamMount::Sub => self.sub_pps.as_ref(),
+        }
+    }
+
+    fn store_sps(&mut self, mount: StreamMount, data: Vec<u8>) {
+        match mount {
+            StreamMount::Main => self.sps = Some(data),
+            StreamMount::Sub => self.sub_sps = Some(data),
+        }
+    }
+
+    fn store_pps(&mut self, mount: StreamMount, data: Vec<u8>) {
+        match mount {
+            StreamMount::Main => self.pps = Some(data),
+            StreamMount::Sub => self.sub_pps = Some(data),
+        }
+    }
 }
 
 // ============================================================================
@@ -153,6 +231,10 @@ pub struct RtspServer {
     config: RtspConfig,
     listener: TcpListener,
     au_hub: Arc<AuHub>,
+    /// Second stream hub (RTSP `/sub` mount, SPEC appendix A #20). Fed by
+    /// the substream encoder pipeline when `[camera.substream]` is on;
+    /// stays empty otherwise (the mount then simply has no media).
+    sub_au_hub: Arc<AuHub>,
     inner: Arc<Mutex<Inner>>,
     shutdown: Arc<Notify>,
 }
@@ -177,11 +259,8 @@ impl RtspServer {
             config: RtspConfig { realm, ..config },
             listener,
             au_hub: Arc::new(AuHub::new()),
-            inner: Arc::new(Mutex::new(Inner {
-                sessions: HashMap::new(),
-                sps: None,
-                pps: None,
-            })),
+            sub_au_hub: Arc::new(AuHub::new()),
+            inner: Arc::new(Mutex::new(Inner::new())),
             shutdown: Arc::new(Notify::new()),
         })
     }
@@ -189,6 +268,11 @@ impl RtspServer {
     /// Returns a reference to the internal [`AuHub`] for frame injection.
     pub fn au_hub(&self) -> &Arc<AuHub> {
         &self.au_hub
+    }
+
+    /// Returns a reference to the substream [`AuHub`] (`/sub` mount).
+    pub fn sub_au_hub(&self) -> &Arc<AuHub> {
+        &self.sub_au_hub
     }
 
     /// Starts accepting RTSP client connections.
@@ -213,10 +297,13 @@ impl RtspServer {
                 Ok((stream, _addr)) => {
                     let inner = self.inner.clone();
                     let au_hub = self.au_hub.clone();
+                    let sub_au_hub = self.sub_au_hub.clone();
                     let config = self.config.clone();
 
                     tokio::spawn(async move {
-                        if let Err(e) = handle_connection(stream, inner, au_hub, config).await {
+                        if let Err(e) =
+                            handle_connection(stream, inner, au_hub, sub_au_hub, config).await
+                        {
                             eprintln!("[RTSP] connection error: {e}");
                         }
                     });
@@ -244,6 +331,7 @@ async fn handle_connection(
     mut stream: TcpStream,
     inner: Arc<Mutex<Inner>>,
     au_hub: Arc<AuHub>,
+    sub_au_hub: Arc<AuHub>,
     config: RtspConfig,
 ) -> Result<(), RtspError> {
     let peer_addr = stream
@@ -406,6 +494,7 @@ async fn handle_connection(
                                 &mut frame_bridge,
                                 &inner,
                                 &au_hub,
+                                &sub_au_hub,
                                 &config,
                                 peer_addr,
                             )
@@ -440,6 +529,7 @@ async fn handle_connection(
                         &mut frame_bridge,
                         &inner,
                         &au_hub,
+                        &sub_au_hub,
                         &config,
                         peer_addr,
                     )
@@ -537,6 +627,7 @@ async fn handle_rtsp_request(
     frame_bridge: &mut Option<tokio::sync::mpsc::Receiver<AccessUnit>>,
     inner: &Arc<Mutex<Inner>>,
     au_hub: &Arc<AuHub>,
+    sub_au_hub: &Arc<AuHub>,
     config: &RtspConfig,
     peer_addr: std::net::SocketAddr,
 ) {
@@ -571,6 +662,7 @@ async fn handle_rtsp_request(
                 frame_bridge,
                 inner,
                 au_hub,
+                sub_au_hub,
                 config,
             )
             .await
@@ -855,18 +947,18 @@ fn base64_encode(data: &[u8]) -> String {
 // SDP generation
 // ============================================================================
 
-/// Generate an SDP description for H.264 video.
-fn generate_sdp(inner: &Arc<Mutex<Inner>>) -> String {
+/// Generate an SDP description for H.264 video on the given mount.
+fn generate_sdp(inner: &Arc<Mutex<Inner>>, mount: StreamMount) -> String {
     let guard = inner.lock().unwrap_or_else(|e| e.into_inner());
 
-    let profile_level_id = match &guard.sps {
+    let profile_level_id = match guard.sps_for(mount) {
         Some(sps) if sps.len() >= 4 => {
             format!("{:02x}{:02x}{:02x}", sps[1], sps[2], sps[3])
         }
         _ => "42e01f".to_string(), // Default: Baseline 3.1
     };
 
-    let sprop = match (&guard.sps, &guard.pps) {
+    let sprop = match (guard.sps_for(mount), guard.pps_for(mount)) {
         (Some(sps), Some(pps)) => {
             format!(
                 "; sprop-parameter-sets={},{}",
@@ -1064,7 +1156,7 @@ async fn handle_describe(
         return;
     }
 
-    let sdp = generate_sdp(inner);
+    let sdp = generate_sdp(inner, StreamMount::from_url(&req.url));
 
     send_response(
         writer,
@@ -1169,12 +1261,15 @@ async fn handle_setup(
         initial_seq = rng.gen();
     }
 
-    // Create session.
+    // Create session. The mount resolves from the request URL (`/sub`
+    // selects the substream; SPEC appendix A #20) and sticks for the
+    // session lifetime.
     let session = Session {
         id: sid.clone(),
         rtp_channel: rtp_ch,
         rtcp_channel: rtcp_ch,
         is_playing: false,
+        mount: StreamMount::from_url(&req.url),
         ssrc,
         seq: Arc::new(AtomicU16::new(initial_seq)),
         base_time: Instant::now(),
@@ -1247,6 +1342,7 @@ async fn handle_play(
     frame_bridge: &mut Option<tokio::sync::mpsc::Receiver<AccessUnit>>,
     inner: &Arc<Mutex<Inner>>,
     au_hub: &Arc<AuHub>,
+    sub_au_hub: &Arc<AuHub>,
     config: &RtspConfig,
 ) -> Result<(), RtspError> {
     // Check authentication.
@@ -1300,17 +1396,15 @@ async fn handle_play(
     }
 
     // Mark session as playing.
-    let session_exists = {
+    let mounted: Option<StreamMount> = {
         let mut guard = inner.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(session) = guard.sessions.get_mut(&sid) {
+        guard.sessions.get_mut(&sid).map(|session| {
             session.is_playing = true;
-            true
-        } else {
-            false
-        }
+            session.mount
+        })
     };
 
-    if !session_exists {
+    let Some(mount) = mounted else {
         send_response(
             writer,
             "454",
@@ -1321,12 +1415,16 @@ async fn handle_play(
         .await
         .ok();
         return Ok(());
-    }
+    };
 
     *session_id = Some(sid.clone());
 
-    // Subscribe to AuHub and bridge to async channel.
-    let subscriber = au_hub.subscribe();
+    // Subscribe to the hub backing this session's mount.
+    let hub = match mount {
+        StreamMount::Main => au_hub,
+        StreamMount::Sub => sub_au_hub,
+    };
+    let subscriber = hub.subscribe();
     let (tx, rx) = tokio::sync::mpsc::channel::<AccessUnit>(64);
 
     // Spawn blocking task to bridge sync receiver to async channel.
@@ -1501,7 +1599,7 @@ pub fn access_unit_to_frames(
 
         if !has_sps || !has_pps {
             let guard = inner.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(sps_data) = &guard.sps {
+            if let Some(sps_data) = guard.sps_for(session.mount) {
                 if !has_sps {
                     injected.push(Nalu {
                         nalu_type: 7,
@@ -1513,7 +1611,7 @@ pub fn access_unit_to_frames(
                     });
                 }
             }
-            if let Some(pps_data) = &guard.pps {
+            if let Some(pps_data) = guard.pps_for(session.mount) {
                 if !has_pps {
                     injected.push(Nalu {
                         nalu_type: 8,
@@ -1538,10 +1636,10 @@ pub fn access_unit_to_frames(
         if nalu.is_sps || nalu.is_pps {
             let mut guard = inner.lock().unwrap_or_else(|e| e.into_inner());
             if nalu.is_sps {
-                guard.sps = Some(nalu.data.clone());
+                guard.store_sps(session.mount, nalu.data.clone());
             }
             if nalu.is_pps {
-                guard.pps = Some(nalu.data.clone());
+                guard.store_pps(session.mount, nalu.data.clone());
             }
         }
         all_nalus.push(nalu);
@@ -1581,13 +1679,9 @@ mod tests {
 
     #[test]
     fn test_sdp_generation_contains_required_fields() {
-        let inner = Arc::new(Mutex::new(Inner {
-            sessions: HashMap::new(),
-            sps: None,
-            pps: None,
-        }));
+        let inner = Arc::new(Mutex::new(Inner::new()));
 
-        let sdp = generate_sdp(&inner);
+        let sdp = generate_sdp(&inner, StreamMount::Main);
 
         assert!(sdp.contains("v=0"), "SDP should contain v=0");
         assert!(sdp.contains("o=-"), "SDP should contain o=");
@@ -1612,13 +1706,12 @@ mod tests {
 
     #[test]
     fn test_sdp_with_sps_pps_includes_sprop() {
-        let inner = Arc::new(Mutex::new(Inner {
-            sessions: HashMap::new(),
-            sps: Some(vec![0x67, 0x42, 0x00, 0x1e]),
-            pps: Some(vec![0x68, 0xce, 0x38, 0x80]),
-        }));
+        let mut inner_state = Inner::new();
+        inner_state.sps = Some(vec![0x67, 0x42, 0x00, 0x1e]);
+        inner_state.pps = Some(vec![0x68, 0xce, 0x38, 0x80]);
+        let inner = Arc::new(Mutex::new(inner_state));
 
-        let sdp = generate_sdp(&inner);
+        let sdp = generate_sdp(&inner, StreamMount::Main);
 
         assert!(
             sdp.contains("sprop-parameter-sets"),
@@ -1632,18 +1725,121 @@ mod tests {
 
     #[test]
     fn test_sdp_default_profile_level_id() {
-        let inner = Arc::new(Mutex::new(Inner {
-            sessions: HashMap::new(),
-            sps: None,
-            pps: None,
-        }));
+        let inner = Arc::new(Mutex::new(Inner::new()));
 
-        let sdp = generate_sdp(&inner);
+        let sdp = generate_sdp(&inner, StreamMount::Main);
 
         assert!(
             sdp.contains("profile-level-id=42e01f"),
             "SDP should use default profile-level-id"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Substream mount routing (SPEC appendix A #20)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_stream_mount_from_url() {
+        use StreamMount::{Main, Sub};
+        assert_eq!(StreamMount::from_url("rtsp://host:8554/stream"), Main);
+        assert_eq!(StreamMount::from_url("rtsp://host:8554/"), Main);
+        assert_eq!(StreamMount::from_url("rtsp://host:8554"), Main);
+        assert_eq!(StreamMount::from_url("rtsp://host:8554/sub"), Sub);
+        assert_eq!(StreamMount::from_url("rtsp://host:8554/sub/"), Sub);
+        assert_eq!(StreamMount::from_url("rtsp://host:8554/SUB"), Sub);
+        assert_eq!(
+            StreamMount::from_url("rtsp://host:8554/sub?pkt_size=1316"),
+            Sub
+        );
+        // Not an exact path segment — stays on the main mount.
+        assert_eq!(StreamMount::from_url("rtsp://host:8554/substream"), Main);
+        assert_eq!(StreamMount::from_url("rtsp://host:8554/stream/sub?x"), Sub);
+        assert_eq!(StreamMount::from_url(""), Main);
+    }
+
+    #[test]
+    fn test_sdp_param_sets_are_per_mount() {
+        let mut state = Inner::new();
+        state.sps = Some(vec![0x67, 0x42, 0x00, 0x1e]);
+        state.pps = Some(vec![0x68, 0x01]);
+        state.sub_sps = Some(vec![0x67, 0x4D, 0x00, 0x0c]);
+        state.sub_pps = Some(vec![0x68, 0x02]);
+        let inner = Arc::new(Mutex::new(state));
+
+        let main_sdp = generate_sdp(&inner, StreamMount::Main);
+        let sub_sdp = generate_sdp(&inner, StreamMount::Sub);
+        assert!(
+            main_sdp.contains("profile-level-id=42001e"),
+            "main SDP must use the main SPS, got: {main_sdp}"
+        );
+        assert!(
+            sub_sdp.contains("profile-level-id=4d000c"),
+            "sub SDP must use the sub SPS, got: {sub_sdp}"
+        );
+        // Each SDP carries its own mount's sprop pair only (different PPS
+        // bytes disambiguate).
+        assert!(main_sdp.contains(&base64_encode(&[0x68, 0x01])));
+        assert!(!main_sdp.contains(&base64_encode(&[0x68, 0x02])));
+        assert!(sub_sdp.contains(&base64_encode(&[0x68, 0x02])));
+    }
+
+    #[test]
+    fn test_access_unit_caches_param_sets_per_mount() {
+        let inner = Arc::new(Mutex::new(Inner::new()));
+        let session = Session {
+            id: "sub-sess".to_string(),
+            rtp_channel: 0,
+            rtcp_channel: 1,
+            is_playing: true,
+            mount: StreamMount::Sub,
+            ssrc: 1,
+            seq: Arc::new(AtomicU16::new(1)),
+            base_time: Instant::now(),
+            last_ts: Arc::new(AtomicU32::new(0)),
+            is_udp: false,
+            udp_socket: None,
+            udp_client_addr: None,
+        };
+        let au = AccessUnit {
+            nalus: vec![
+                Nalu {
+                    nalu_type: 7,
+                    data: vec![0x67, 0x4D, 0x00, 0x0c],
+                    is_idr: false,
+                    is_sps: true,
+                    is_pps: false,
+                    is_aud: false,
+                },
+                Nalu {
+                    nalu_type: 8,
+                    data: vec![0x68, 0x02],
+                    is_idr: false,
+                    is_sps: false,
+                    is_pps: true,
+                    is_aud: false,
+                },
+                Nalu {
+                    nalu_type: 5,
+                    data: vec![0x65, 0x11],
+                    is_idr: true,
+                    is_sps: false,
+                    is_pps: false,
+                    is_aud: false,
+                },
+            ],
+            timestamp: Instant::now(),
+            is_key_frame: true,
+        };
+        let _ = access_unit_to_frames(&au, &session, &inner);
+        let guard = inner.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(guard.sps.is_none(), "sub traffic must not touch main SPS");
+        assert!(guard.pps.is_none(), "sub traffic must not touch main PPS");
+        assert_eq!(
+            guard.sub_sps.as_deref(),
+            Some(&[0x67u8, 0x4D, 0x00, 0x0c][..])
+        );
+        assert_eq!(guard.sub_pps.as_deref(), Some(&[0x68u8, 0x02][..]));
     }
 
     // -----------------------------------------------------------------------
@@ -2116,17 +2312,17 @@ mod tests {
 
     #[test]
     fn test_access_unit_to_frames_basic() {
-        let inner = Arc::new(Mutex::new(Inner {
-            sessions: HashMap::new(),
-            sps: Some(vec![0x67, 0x42, 0x00, 0x1e]),
-            pps: Some(vec![0x68, 0xce, 0x38, 0x80]),
-        }));
+        let mut inner_state = Inner::new();
+        inner_state.sps = Some(vec![0x67, 0x42, 0x00, 0x1e]);
+        inner_state.pps = Some(vec![0x68, 0xce, 0x38, 0x80]);
+        let inner = Arc::new(Mutex::new(inner_state));
 
         let session = Session {
             id: "test".to_string(),
             rtp_channel: 0,
             rtcp_channel: 1,
             is_playing: true,
+            mount: StreamMount::Main,
             ssrc: 0xDEAD_BEEF,
             seq: Arc::new(AtomicU16::new(100)),
             base_time: Instant::now(),
@@ -2800,6 +2996,7 @@ mod tests {
             rtp_channel: 0,
             rtcp_channel: 1,
             is_playing: true,
+            mount: StreamMount::Main,
             ssrc: 0x1122_3344,
             seq: Arc::new(AtomicU16::new(7)),
             base_time: Instant::now(),
@@ -2808,11 +3005,7 @@ mod tests {
             udp_socket: None,
             udp_client_addr: None,
         };
-        let inner = Arc::new(Mutex::new(Inner {
-            sessions: HashMap::new(),
-            sps: None,
-            pps: None,
-        }));
+        let inner = Arc::new(Mutex::new(Inner::new()));
 
         let count = write_access_unit(&key_au(), &mut writer, &session, &inner)
             .await

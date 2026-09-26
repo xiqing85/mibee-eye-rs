@@ -234,6 +234,7 @@ Key settings:
 | `[camera]` | `width` / `height` | 1280×720 | Capture resolution |
 | `[camera]` | `fps` | 15 | Frames per second |
 | `[camera]` | `bitrate` | 2000000 | Target bitrate (bps) |
+| `[camera.substream]` | `enabled` | `false` | Low-resolution bandwidth-saving substream (640×360@15, 400 kbps): second encoder session from the downscaled capture — RTSP `/sub` mount + ONVIF `sub` profile + web `stream.sub.mse`; main stream, recording and GB28181 stay on the main encode |
 | `[rtsp]` | `port` | 8554 | RTSP server port |
 | `[rtmp]` | `enabled` / `url` | `false` / — | Push the stream to an RTMP server |
 | `[onvif]` | `port` | 8080 | ONVIF SOAP/HTTP port |
