@@ -20,6 +20,60 @@ use crate::h264::hub::AccessUnit;
 use crate::web::api::AppState;
 use crate::web::fmp4;
 
+/// Shared floor of the fMP4 media clock (90 kHz ticks). Hands the MSE
+/// timeline from one HTTP connection to the next: a new connection seeds
+/// strictly past every timestamp any earlier connection emitted, so a
+/// client that transparently reconnects (Wi-Fi blip, proxy idle cut) can
+/// keep appending to its existing SourceBuffer instead of tearing the
+/// decoder down — the seamless-reconnect contract (SPEC §4.1).
+static MSE_FLOOR_TICKS: std::sync::Mutex<u64> = std::sync::Mutex::new(0);
+
+fn seed_mse_clock() -> u64 {
+    let mut floor = MSE_FLOOR_TICKS.lock().expect("mse floor lock");
+    *floor += 90;
+    *floor
+}
+
+fn publish_mse_clock(ticks: u64) {
+    let mut floor = MSE_FLOOR_TICKS.lock().expect("mse floor lock");
+    if ticks > *floor {
+        *floor = ticks;
+    }
+}
+
+/// Stamps one connection's frames on the shared media clock.
+struct MseTimeline {
+    prev: Option<Instant>,
+    clock: u64,
+}
+
+impl MseTimeline {
+    fn new() -> Self {
+        Self {
+            prev: None,
+            clock: seed_mse_clock(),
+        }
+    }
+
+    /// Returns this frame's timestamp (90 kHz ticks) and its duration.
+    /// Wall-clock interval → ticks keeps the timeline gapless and
+    /// true-speed regardless of sensor fps; long stalls clamp to 200 ms so
+    /// server-side realignment skips stay seamless for the decoder.
+    fn next(&mut self, now: Instant) -> (u64, u32) {
+        let ticks = match self.prev {
+            Some(prev) => {
+                let us = now.duration_since(prev).as_micros() as u64 * 90 / 1_000;
+                us.clamp(90, 18_000)
+            }
+            None => 6_000,
+        };
+        self.prev = Some(now);
+        self.clock += ticks;
+        publish_mse_clock(self.clock);
+        (self.clock, ticks as u32)
+    }
+}
+
 /// Decides whether a drained frame may still be serialized after loss.
 ///
 /// `skipped` counts frames dropped by the drain-to-latest bridge (their
@@ -118,8 +172,7 @@ pub async fn stream_mse_handler(
         let _unsub = Unsub { hub: au_hub, id: sub_id };
         let mut sequence: u32 = 0;
         let mut initialized = false;
-        let mut prev_frame_time: Option<Instant> = None;
-        let mut media_clock: u64 = 0;
+        let mut timeline = MseTimeline::new();
 
         while let Some(au) = arx.recv().await {
             if !initialized {
@@ -141,18 +194,9 @@ pub async fn stream_mse_handler(
 
             let nalus: Vec<Vec<u8>> = au.nalus.iter().map(|n| n.data.clone()).collect();
             // Wall-clock interval → 90 kHz ticks keeps the MSE timeline
-            // gapless and true-speed regardless of sensor fps.
-            let now = Instant::now();
-            let duration = match prev_frame_time {
-                Some(prev) => {
-                    let us = now.duration_since(prev).as_micros() as u64;
-                    (us * 90 / 1_000).clamp(90, 18_000) as u32
-                }
-                None => 6000,
-            };
-            prev_frame_time = Some(now);
-            let timestamp = media_clock;
-            media_clock += duration as u64;
+            // gapless and true-speed regardless of sensor fps; the shared
+            // clock hands the timeline to the client's next (re)connection.
+            let (timestamp, duration) = timeline.next(Instant::now());
             let seg = fmp4::build_media_segment(&nalus, sequence, timestamp, duration, au.is_key_frame);
             sequence = sequence.wrapping_add(1);
             yield Ok(seg);
@@ -225,6 +269,112 @@ mod tests {
         assert!(g.allow(true, 0, 0));
         assert!(g.allow(false, 0, 0));
         assert!(g.allow(false, 0, 0));
+    }
+
+    // Seamless-reconnect contract (SPEC §4.1): the fMP4 timeline is handed
+    // from one HTTP connection to the next, so a client that transparently
+    // refetches keeps appending to its existing SourceBuffer.
+    #[test]
+    fn test_mse_timeline_handoff_across_connections() {
+        let base = Instant::now();
+        let mut c1 = MseTimeline::new();
+        let mut last = 0;
+        for i in 0..5 {
+            let (ts, _) = c1.next(base + Duration::from_millis(i * 66));
+            if i > 0 {
+                assert!(ts > last, "connection 1 timestamps must increase");
+            }
+            last = ts;
+        }
+        let mut c2 = MseTimeline::new();
+        let (first2, _) = c2.next(base + Duration::from_secs(10));
+        assert!(
+            first2 > last,
+            "second connection must seed past first's last timestamp: {first2} <= {last}"
+        );
+    }
+
+    #[test]
+    fn test_mse_timeline_clamps_stall() {
+        let base = Instant::now();
+        let mut tl = MseTimeline::new();
+        tl.next(base);
+        let (_, d) = tl.next(base + Duration::from_secs(5));
+        assert_eq!(d, 18_000, "long stall must clamp to 200ms of media time");
+        let (_, d) = tl.next(base + Duration::from_millis(5_066));
+        assert!(d >= 90, "normal frame duration must be ≥90 ticks");
+    }
+
+    /// Extract the 64-bit baseMediaDecodeTime from the first tfdt (v1) box.
+    fn parse_tfdt(segment: &[u8]) -> Option<u64> {
+        let pos = segment.windows(4).position(|w| w == b"tfdt")?;
+        let v = segment.get(pos + 8..pos + 16)?;
+        let mut b = [0u8; 8];
+        b.copy_from_slice(v);
+        Some(u64::from_be_bytes(b))
+    }
+
+    #[tokio::test]
+    async fn test_stream_mse_timeline_continues_across_connections() {
+        let hub = Arc::new(AuHub::new());
+        let st = Arc::new(AppState {
+            au_hub: Some(hub.clone()),
+            ..AppState::default()
+        });
+        let app = Router::new()
+            .route(
+                "/api/cameras/:id/stream.mse",
+                axum::routing::get(stream_mse_handler),
+            )
+            .with_state(st);
+
+        let open = || {
+            app.clone().oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/cameras/0/stream.mse")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+        };
+        let mut round_tfdts: Vec<(u64, u64)> = Vec::new(); // (first, last) per connection
+        for _round in 0..2 {
+            let resp = open().await.unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+            let mut body = resp.into_body().into_data_stream();
+            // Prime: key frame initializes, then normal frames flow. The
+            // drain-to-latest bridge collapses back-to-back writes, so pace
+            // each AU apart.
+            for key in [true, false, false] {
+                tokio::time::sleep(Duration::from_millis(80)).await;
+                hub.write(au(key));
+            }
+            let mut first: Option<u64> = None;
+            let mut last = 0u64;
+            for _ in 0..4 {
+                let chunk = tokio::time::timeout(Duration::from_secs(3), body.next())
+                    .await
+                    .expect("segment timeout")
+                    .expect("stream ended")
+                    .expect("stream error");
+                if !chunk.windows(4).any(|w| w == b"moof") {
+                    continue; // init segment
+                }
+                let ts = parse_tfdt(&chunk).expect("moof must carry a tfdt v1 box");
+                first.get_or_insert(ts);
+                last = last.max(ts);
+            }
+            let first = first.expect("at least one media segment per connection");
+            assert!(last >= first);
+            round_tfdts.push((first, last));
+            // Body drops here = client disconnect before the next connection.
+        }
+        let (first0, last0) = round_tfdts[0];
+        let (first1, last1) = round_tfdts[1];
+        assert!(last1 >= first1);
+        assert!(
+            first1 > last0,
+            "second connection must continue past first's timeline: {first1} <= {last0} (first0={first0})"
+        );
     }
 
     #[test]
