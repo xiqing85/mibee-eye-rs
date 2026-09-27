@@ -13,6 +13,47 @@ Notable changes to MiBee Eye (Rust implementation) are documented here.
 > device-role coverage — see
 > [docs/roadmap-v0.3.0.md](docs/roadmap-v0.3.0.md)).
 
+## [0.4.0] — 2026-09-27
+
+Synchronized minor release with [mibee-eye-go](https://github.com/xiqing85/mibee-eye-go/releases/tag/v0.4.0) and [mibee-eye-notebook](https://github.com/xiqing85/mibee-eye-notebook/releases/tag/v0.4.0) (same version, same day).
+
+### Added
+
+- **Low-resolution bandwidth-saving substream** (SPEC appendix A #20): a
+  second hardware-encoded H.264 session (default 640×360 / 400 kbps,
+  `fps 0` = follow main rate) on RTSP `/sub`, the ONVIF sub profile and
+  the web player's quality toggle.
+- **Device-level rotation baked into the stream** (SPEC appendix A #19):
+  90°/270° transpose in-process ahead of the M2M encoder; negotiated
+  OUTPUT stride honored when feeding the hardware encoder.
+- **Graceful deregistration**: SIGTERM and the web restart flow send
+  `REGISTER Expires: 0` before exit (parity with the Go and notebook
+  twins) — the platform sees the device go away in seconds.
+- **SIP-Date drift observation** (GB/T 28181-2022 §9.10.2): a three-state
+  latch warns on >5 s platform-clock drift (parity with notebook).
+- **Seamless MSE reconnect**: the live view's media timeline survives
+  connection drops without the 30 s stall.
+- **Alarm events end to end**: rising-edge alarm SSE (SPEC v1 §6) with
+  web toasts, and AI motion alarms exposed as ONVIF Pull-Point
+  MotionAlarm events (GetCapabilities advertises the events service).
+- Tagged releases are gated on the embedded web UI matching
+  `mibee-eye-webui@main` byte-for-byte.
+
+### Fixed
+
+- Device-level serial fallback: an empty serial no longer breaks NVR
+  stable-id dedup.
+- Duplicate test attribute broke the all-features clippy job.
+- Shared frontend: explicit username login field, mobile toolbar wrap
+  (390 px layouts), live-view rotate button, substream quality toggle,
+  and the AI model panel envelope fix (model select no longer empty).
+
+### Dependencies
+
+- gb28181-rs / onvif-device-rs moved to released crates.io versions;
+  onvif-device-rs carries the quick-xml 0.41 security migration
+  (RUSTSEC-2026-0194/0195).
+
 ## [Unreleased]
 
 - **Low-resolution bandwidth-saving substream** (`[camera.substream]`,
