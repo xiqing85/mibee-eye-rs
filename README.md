@@ -43,7 +43,7 @@ recording with GB28181 playback · imaging controls · snapshot.
 
 | Feature | Status | Description |
 |---------|--------|-------------|
-| **ONVIF Profile S** | ✅ | Device/Media/Imaging SOAP server + WS-Discovery (port 8080) |
+| **ONVIF Profile S + Media2** | ✅ | Device/Media/PTZ/Imaging SOAP server + Media2 (ver20/media) + Pull-Point/push events + WS-Discovery (port 8080) |
 | **RTSP Streaming** | ✅ | H.264 video streaming (port 8554) |
 | **GB28181 Device** | ✅ | SIP registration (UDP/TCP), Catalog/DeviceInfo/RecordInfo queries, live/playback/download PS streaming, SIP INFO playback control, platform snapshot commands — powered by [gb28181-rs](https://github.com/mickeyzzc/gb28181-rs) |
 | **GB 35114 A-level** | ✅ | Optional SM2 certificate REGISTER auth + keyed-SM3 integrity (`--features gb35114`) |
@@ -239,7 +239,10 @@ Key settings:
 | `[rtmp]` | `enabled` / `url` | `false` / — | Push the stream to an RTMP server |
 | `[onvif]` | `port` | 8080 | ONVIF SOAP/HTTP port |
 | `[onvif]` | `password` | — | ONVIF authentication (set this!) |
-| `[onvif]` | `events_enabled` | `true` | Pull-Point events service: AI motion alarms as MotionAlarm for NVR subscribers |
+| `[onvif]` | `events_enabled` | `true` | Pull-Point events service: AI motion alarms as MotionAlarm for NVR subscribers (plus the wsnt:Subscribe push interface) |
+| `[onvif]` | `media2_enabled` | `true` | Media2 service (ver20/media, Profile-T entry path) on `/onvif/media2_service` |
+| `[onvif]` | `http_digest` | `false` | HTTP Digest transport auth (MD5, qop=auth) alongside WS-Security |
+| `[onvif]` | `ip_filter` | `[]` | Client allow-list (IPv4 / CIDR); peers outside get 403 before SOAP processing |
 | `[web]` | `port` | 8088 | Web admin UI port (credentials mirror ONVIF by default) |
 | `[gb28181]` | `enabled` | `false` | SIP platform registration (`transport`: udp/tcp) |
 | `[recording]` | `enabled` | `false` | Continuous H.264 segments (600s / 3-day retention / 8192MB cap) |

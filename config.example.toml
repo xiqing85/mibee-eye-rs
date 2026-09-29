@@ -145,6 +145,21 @@ password = ""  # <-- set this!
 # type: boolean  |  default: true  |  env: MIBEE_EYE_ONVIF_EVENTS_ENABLED
 events_enabled = true
 
+# Serve the ONVIF Media2 service (ver20/media, the Profile-T entry path)
+# on /onvif/media2_service and advertise it in GetServices
+# type: boolean  |  default: true  |  env: MIBEE_EYE_ONVIF_MEDIA2_ENABLED
+media2_enabled = true
+
+# Offer HTTP Digest transport auth (MD5, qop="auth") alongside
+# WS-Security — the Profile S route for non-TLS deployments
+# type: boolean  |  default: false  |  env: MIBEE_EYE_ONVIF_HTTP_DIGEST
+http_digest = false
+
+# Client allow-list (IPv4 addresses or CIDR blocks, Allow mode). Peers
+# outside the list get 403 before any SOAP processing. Empty = no filter
+# type: string[]  |  default: []  |  env: MIBEE_EYE_ONVIF_IP_FILTER (comma-separated)
+ip_filter = []
+
 # --------------------------------------------------------------------------
 # GB28181 SIP server settings
 # --------------------------------------------------------------------------

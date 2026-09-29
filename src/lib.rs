@@ -14,6 +14,9 @@ pub mod h264;
 pub mod hardware;
 pub mod motion;
 pub mod onvif_alarm;
+// Product-side glue over the ONVIF Device stack (onvif-device-rs 0.8):
+// server wiring, imaging params, device hooks, IP-filter config parsing.
+pub mod onvif_glue;
 // ONVIF Device stack lives in the `onvif-rs` crate; re-exported under the
 // historical module path so `crate::onvif::…` references keep working.
 pub use onvif_device_rs as onvif;

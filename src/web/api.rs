@@ -2095,6 +2095,80 @@ mod tests {
         );
     }
 
+    /// SPEC §5 partial merge for the `[onvif]` additions
+    /// (media2_enabled / http_digest / ip_filter): a partial PUT of only
+    /// the new keys applies them and leaves every other stored onvif
+    /// field (and the masked secret) untouched; the new keys are plain
+    /// bools / string arrays, so they round-trip through GET unmasked.
+    #[tokio::test]
+    async fn test_put_config_onvif_new_keys_partial_merge() {
+        let app = configured_router();
+        let (cookie, csrf) = login(&app).await;
+
+        // Seed an onvif secret first (the fixture leaves it empty).
+        let res = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/config")
+                    .method(Method::PUT)
+                    .header("cookie", &cookie)
+                    .header("x-csrf-token", &csrf)
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_vec(&serde_json::json!({
+                            "onvif": {"password": "onvif-secret"}
+                        }))
+                        .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+
+        // Partial PUT of only the new keys.
+        let res = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/config")
+                    .method(Method::PUT)
+                    .header("cookie", &cookie)
+                    .header("x-csrf-token", &csrf)
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_vec(&serde_json::json!({
+                            "onvif": {
+                                "http_digest": true,
+                                "ip_filter": ["192.168.63.0/24"]
+                            }
+                        }))
+                        .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+
+        let res = app
+            .oneshot(authed_get("/api/config", &cookie))
+            .await
+            .unwrap();
+        let json = body_json(res).await;
+        let onvif = &json["data"]["onvif"];
+        // New keys applied verbatim (plain bool / string array — no
+        // masking applies, and the list is echoed as stored)...
+        assert_eq!(onvif["http_digest"], true);
+        assert_eq!(onvif["ip_filter"], serde_json::json!(["192.168.63.0/24"]));
+        // ...untouched siblings keep their stored values...
+        assert_eq!(onvif["media2_enabled"], true);
+        assert_eq!(onvif["username"], "admin");
+        // ...and the secret survives the partial PUT, masked in GET.
+        assert_eq!(onvif["password"], "****");
+    }
+
     #[tokio::test]
     async fn test_put_config_valid() {
         let app = configured_router();
