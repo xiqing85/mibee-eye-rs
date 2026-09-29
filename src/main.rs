@@ -20,16 +20,12 @@ use mibee_eye_raspi_rs::gb28181::server::Gb28181Server;
 use mibee_eye_raspi_rs::h264::hub::{AccessUnit, AuHub};
 use mibee_eye_raspi_rs::h264::parser::Parser;
 use mibee_eye_raspi_rs::hardware::capability::{CapabilityGate, HardwareCapability};
-use mibee_eye_raspi_rs::onvif::device::{DeviceHandler, DeviceServiceHandlers};
 use mibee_eye_raspi_rs::onvif::discovery::DiscoveryServer;
-use mibee_eye_raspi_rs::onvif::media::{
-    GetProfilesHandler, GetSnapshotUriHandler, GetStreamUriHandler, GetVideoSourcesHandler,
-    MediaProfileConfig, OnvifMediaConfig, VideoEncoding,
+use mibee_eye_raspi_rs::onvif::media::{MediaProfileConfig, OnvifMediaConfig, VideoEncoding};
+use mibee_eye_raspi_rs::onvif_glue::{
+    wire_onvif_server, DeviceHooksGlue, DeviceReport, ImagingGlue, OnvifWiringInput,
 };
-use mibee_eye_raspi_rs::onvif::ptz::PtzHandler;
-use mibee_eye_raspi_rs::onvif::server::{OnvifConfig, OnvifServer};
 use mibee_eye_raspi_rs::pipeline::bus::{EventBus, PipelineEvent};
-use mibee_eye_raspi_rs::ptz::state::PtzState;
 use mibee_eye_raspi_rs::streaming::rtsp::{RtspConfig, RtspServer};
 use mibee_eye_raspi_rs::web::events::global_hub;
 use mibee_eye_raspi_rs::web::server::WebServer;
@@ -347,73 +343,16 @@ async fn main() {
     let ai_loader: Option<mibee_eye_raspi_rs::ai::registry::AiLoader> = None;
 
     // --- Set up and start ONVIF SOAP server ---
-    let onvif_cfg = OnvifConfig {
-        port: config.onvif.port,
-        username: config.onvif.username.clone(),
-        password: config.onvif.password.clone(),
-        // An empty password has always meant "auth off" for this host
-        // (Config::load only warns); onvif-device-rs 0.3.0 is fail-closed
-        // unless that is stated explicitly.
-        allow_no_auth: config.onvif.password.is_empty(),
-        ..Default::default()
-    };
-    let mut onvif_server = OnvifServer::new(&onvif_cfg);
-
-    // Pull-Point events service (onvif-device-rs 0.7): AI motion alarms
-    // publish as MotionAlarm while an NVR holds a subscription. The
-    // publish seam must be taken before start; None = disabled by config.
-    let onvif_events = config
-        .onvif
-        .events_enabled
-        .then(|| onvif_server.enable_events());
-
-    // Device service handlers. onvif-device-rs 0.6 fail-closes on the
-    // neutral identity placeholders (issue #20); Config::load backfills
-    // the documented defaults, so an error here means the host explicitly
-    // configured placeholder/empty identity — keep the remaining ONVIF
-    // services up and say so instead of dying.
-    match DeviceServiceHandlers::new(
-        config.device.clone(),
-        config.onvif.port,
-        device_ip.clone(),
-    )
-    // Advertise the events service exactly when its routes are served
-    // (enable_events above) — the pair must not disagree.
-    .map(|svc| svc.with_events_support(config.onvif.events_enabled))
-    {
-        Ok(svc) => {
-            let device_svc = Arc::new(svc);
-            for action in [
-                "GetSystemDateAndTime",
-                "GetDeviceInformation",
-                "GetCapabilities",
-                "GetServices",
-                "GetScopes",
-            ] {
-                onvif_server.register_handler(
-                    action,
-                    Box::new(DeviceHandler(Arc::clone(&device_svc))),
-                );
-            }
-        }
-        Err(e) => eprintln!(
-            "onvif: device identity config rejected ({e}) — device service actions stay unregistered; set real values in [device]"
-        ),
-    }
-
-    // Pre-auth actions per ONVIF Core spec â reachable without authentication:
-    //   GetCapabilities / GetServices: needed during NVR discovery so clients can
-    //     read service endpoints before they have credentials to compute a digest.
-    //   GetSystemDateAndTime: clients sync the clock before computing WS-Security
-    //     username-token digests.
-    for action in ["GetSystemDateAndTime", "GetCapabilities", "GetServices"] {
-        onvif_server.register_anonymous_action(action);
-    }
-
-    // Media service handlers — dimensions are the post-rotation effective
-    // ones so Profile S matches the actual stream aspect (SPEC A #19).
+    // All action registration lives in onvif_glue::wire_onvif_server
+    // (Device family + hooks, Media store migration, PTZ, Imaging,
+    // Media2, IP filter, HTTP Digest) — tests/onvif_wire.rs drives the
+    // same wiring over a real socket, so the wire tests exercise exactly
+    // what the product ships.
+    //
+    // Media service — dimensions are the post-rotation effective ones so
+    // Profile S matches the actual stream aspect (SPEC A #19).
     let (onvif_w, onvif_h) = config.camera.effective_dims();
-    let media_cfg = Arc::new(OnvifMediaConfig {
+    let media_cfg = OnvifMediaConfig {
         camera_width: onvif_w,
         camera_height: onvif_h,
         camera_fps: config.camera.fps,
@@ -437,41 +376,59 @@ async fn main() {
                 vec![MediaProfileConfig::new("sub", w, h, fps, bitrate, "/sub")]
             })
             .unwrap_or_default(),
+    };
+    // SetSynchronizationPoint (Media1 and Media2 faces) raises the same
+    // on-demand IDR latch the GB28181 IFrameCmd control uses — the next
+    // encoded frame becomes a keyframe.
+    let keyframe_hook: std::sync::Arc<dyn Fn() + Send + Sync> = {
+        let idr_flag = Arc::clone(&idr_flag);
+        std::sync::Arc::new(move || mibee_eye_raspi_rs::camera::raise_idr_request(&idr_flag))
+    };
+    // Device service host effects: observe-only clock / reboot /
+    // factory-default (never executed over the network), and real
+    // app-level system log / support info texts.
+    let device_hooks = std::sync::Arc::new(DeviceHooksGlue::new(DeviceReport {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        device_line: format!(
+            "{} — {} {}",
+            config.device.name, config.device.manufacturer, config.device.model
+        ),
+        camera_line: format!(
+            "{}x{}@{}fps {} {}bps",
+            onvif_w, onvif_h, config.camera.fps, config.camera.codec, config.camera.bitrate
+        ),
+        notes: vec![
+            format!(
+                "gb28181: {}",
+                if config.gb28181.enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                }
+            ),
+            format!(
+                "ai: {}",
+                if config.features.ai.enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                }
+            ),
+        ],
+    }));
+    let wired = wire_onvif_server(OnvifWiringInput {
+        host: config.onvif.clone(),
+        device: config.device.clone(),
+        device_ip: device_ip.clone(),
+        media: media_cfg,
+        keyframe_hook: Some(keyframe_hook),
+        hooks: device_hooks,
+        imaging: std::sync::Arc::new(ImagingGlue::new()),
     });
-    onvif_server.register_handler(
-        "GetProfiles",
-        Box::new(GetProfilesHandler::new(Arc::clone(&media_cfg))),
-    );
-    onvif_server.register_handler(
-        "GetSnapshotUri",
-        Box::new(GetSnapshotUriHandler::new(Arc::clone(&media_cfg))),
-    );
-    onvif_server.register_handler(
-        "GetStreamUri",
-        Box::new(GetStreamUriHandler::new(Arc::clone(&media_cfg))),
-    );
-    onvif_server.register_handler(
-        "GetVideoSources",
-        Box::new(GetVideoSourcesHandler::new(Arc::clone(&media_cfg))),
-    );
-
-    // PTZ service handler (dispatches internally based on body content)
-    let ptz_state = Arc::new(PtzState::new());
-    for action in [
-        "ContinuousMove",
-        "AbsoluteMove",
-        "RelativeMove",
-        "Stop",
-        "GetStatus",
-        "GetPresets",
-        "SetPreset",
-        "GotoPreset",
-        "RemovePreset",
-        "GetNodes",
-        "GetConfigurations",
-    ] {
-        onvif_server.register_handler(action, Box::new(PtzHandler(Arc::clone(&ptz_state))));
-    }
+    // Pull-Point events seam (None when disabled by config) — the AI
+    // alarm bridge publishes MotionAlarm through it below.
+    let onvif_events = wired.events;
+    let onvif_server = wired.server;
 
     println!("onvif: listening on :{}", config.onvif.port);
     tokio::spawn(async move {

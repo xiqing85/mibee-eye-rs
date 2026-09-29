@@ -1,6 +1,6 @@
 [package]
 name = "mibee-eye-raspi-rs"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 description = "Turn any Linux board into an ONVIF / GB28181 IP camera — the Rust implementation of MiBee Eye"
 license = "Apache-2.0"
@@ -40,9 +40,13 @@ env_logger = "0.11"
 # device-side closure package; the previous git pins (fcdb5fa era) are
 # all contained in this release.
 gb28181-rs = "0.12.0"
-# ONVIF Device stack (extracted library) — v0.7.0 ships the quick-xml
-# 0.41 security migration plus the parity batch the git pin tracked.
-onvif-device-rs = { git = "https://github.com/mickeyzzc/onvif-rs.git", rev = "1826726" }
+# ONVIF Device stack (extracted library). main @ 02228fd carries the
+# device/media/PTZ/imaging completion batches (issues #47-#58), the
+# Media2 ver20 service (#53/#61), the wsnt push-subscription interface
+# (#50/#62), HTTP Digest + IP filter + AccessPolicy (#54/#63) on top of
+# the quick-xml 0.41 migration, and the WSDL shape fixes for GetServices
+# / GetScopes (issues #64/#65, cross-library interop findings).
+onvif-device-rs = { git = "https://github.com/mickeyzzc/onvif-rs.git", rev = "02228fd" }
 anyhow = "1"
 # AI inference (ONNX Runtime) — optional, behind `ai` feature
 # load-dynamic: no C++ linking at compile time; libonnxruntime.so loaded at runtime via ORT_DYLIB_PATH

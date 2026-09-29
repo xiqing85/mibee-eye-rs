@@ -359,6 +359,25 @@ pub struct ONVIFConfig {
     /// on; see `onvif_alarm`.
     #[serde(default = "default_onvif_events_enabled")]
     pub events_enabled: bool,
+    /// Serve the ONVIF Media2 service (ver20/media) on
+    /// `/onvif/media2_service` and advertise it in GetServices — the
+    /// Profile-T entry path (onvif-device-rs 0.8). Boot default on;
+    /// `false` restores the pre-Media2 wire bytes exactly.
+    #[serde(default = "default_onvif_media2_enabled")]
+    pub media2_enabled: bool,
+    /// Offer HTTP Digest transport auth (RFC 7616 subset: MD5,
+    /// qop="auth") alongside WS-Security — the Profile S route for
+    /// non-TLS deployments (onvif-device-rs 0.8). Boot default `false`
+    /// keeps the historical WSSE-only challenge bytes.
+    #[serde(default = "default_onvif_http_digest")]
+    pub http_digest: bool,
+    /// Client allow-list as IPv4 addresses / CIDR blocks (e.g.
+    /// `"192.168.1.0/24"`, `"10.0.0.5"`). Empty / absent = no filtering
+    /// (historical behavior). When non-empty, only listed networks may
+    /// talk to the ONVIF listener (Allow mode; everyone else gets 403
+    /// before any SOAP processing).
+    #[serde(default)]
+    pub ip_filter: Vec<String>,
 }
 
 // GB28181 device configuration lives in the `gb28181-rs` crate. This
@@ -401,6 +420,14 @@ fn default_alarm_notify_enabled() -> bool {
 
 fn default_onvif_events_enabled() -> bool {
     true
+}
+
+fn default_onvif_media2_enabled() -> bool {
+    true
+}
+
+fn default_onvif_http_digest() -> bool {
+    false
 }
 
 fn default_alarm_cooldown_secs() -> u64 {
@@ -739,6 +766,9 @@ impl Default for ONVIFConfig {
             username: default_onvif_username(),
             password: String::new(),
             events_enabled: default_onvif_events_enabled(),
+            media2_enabled: default_onvif_media2_enabled(),
+            http_digest: default_onvif_http_digest(),
+            ip_filter: Vec::new(),
         }
     }
 }
@@ -938,6 +968,11 @@ impl Config {
             return Err(ConfigError::Validation(
                 "onvif.port must be positive".into(),
             ));
+        }
+        if let Err(e) = crate::onvif_glue::parse_ip_filter(&self.onvif.ip_filter) {
+            return Err(ConfigError::Validation(format!(
+                "onvif.ip_filter entries must be IPv4 or IPv4/prefix (0-32): {e}"
+            )));
         }
 
         // --- web ---
@@ -1170,6 +1205,23 @@ fn apply_env_overrides(config: &mut Config) {
     override_int("MIBEE_EYE_ONVIF_PORT", &mut config.onvif.port);
     override_str("MIBEE_EYE_ONVIF_USERNAME", &mut config.onvif.username);
     override_str("MIBEE_EYE_ONVIF_PASSWORD", &mut config.onvif.password);
+    override_bool(
+        "MIBEE_EYE_ONVIF_EVENTS_ENABLED",
+        &mut config.onvif.events_enabled,
+    );
+    override_bool(
+        "MIBEE_EYE_ONVIF_MEDIA2_ENABLED",
+        &mut config.onvif.media2_enabled,
+    );
+    override_bool("MIBEE_EYE_ONVIF_HTTP_DIGEST", &mut config.onvif.http_digest);
+    if let Ok(list) = std::env::var("MIBEE_EYE_ONVIF_IP_FILTER") {
+        config.onvif.ip_filter = list
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect();
+    }
     // --- gb28181 ---
     override_bool("MIBEE_EYE_GB28181_ENABLED", &mut config.gb28181.enabled);
     override_str(
@@ -1447,6 +1499,10 @@ mod tests {
         assert_eq!(cfg.onvif.port, 8080);
         assert_eq!(cfg.onvif.username, "admin");
         assert_eq!(cfg.onvif.password, "");
+        assert!(cfg.onvif.events_enabled);
+        assert!(cfg.onvif.media2_enabled);
+        assert!(!cfg.onvif.http_digest);
+        assert!(cfg.onvif.ip_filter.is_empty());
         // gb28181
         assert!(!cfg.gb28181.enabled);
         assert_eq!(cfg.gb28181.platform_sip_address, "192.168.1.1");
@@ -1792,6 +1848,10 @@ password = "rtsp_pass"
 port = 8081
 username = "onvif_admin"
 password = "onvif_secret"
+events_enabled = false
+media2_enabled = false
+http_digest = true
+ip_filter = ["192.168.63.0/24", "10.0.0.7"]
 
 [web]
 enabled = false
@@ -1871,6 +1931,13 @@ enabled = true
         assert_eq!(cfg.onvif.port, 8081);
         assert_eq!(cfg.onvif.username, "onvif_admin");
         assert_eq!(cfg.onvif.password, "onvif_secret");
+        assert!(!cfg.onvif.events_enabled);
+        assert!(!cfg.onvif.media2_enabled);
+        assert!(cfg.onvif.http_digest);
+        assert_eq!(
+            cfg.onvif.ip_filter,
+            vec!["192.168.63.0/24".to_string(), "10.0.0.7".to_string()]
+        );
 
         // web
         assert!(!cfg.web.enabled);
@@ -2352,6 +2419,42 @@ bitrate = 250000
         apply_env_overrides(&mut cfg);
         assert_eq!(cfg.onvif.password, "super_secret");
         unsafe { std::env::remove_var("MIBEE_EYE_ONVIF_PASSWORD") };
+    }
+
+    #[test]
+    fn test_env_override_onvif_new_keys() {
+        let _guard = ENV_LOCK.lock();
+        unsafe { std::env::set_var("MIBEE_EYE_ONVIF_MEDIA2_ENABLED", "false") };
+        unsafe { std::env::set_var("MIBEE_EYE_ONVIF_HTTP_DIGEST", "true") };
+        unsafe { std::env::set_var("MIBEE_EYE_ONVIF_IP_FILTER", " 10.1.0.0/16 , 10.2.0.5 ") };
+        let mut cfg = Config::default();
+        apply_env_overrides(&mut cfg);
+        assert!(!cfg.onvif.media2_enabled);
+        assert!(cfg.onvif.http_digest);
+        assert_eq!(
+            cfg.onvif.ip_filter,
+            vec!["10.1.0.0/16".to_string(), "10.2.0.5".to_string()]
+        );
+        unsafe { std::env::remove_var("MIBEE_EYE_ONVIF_MEDIA2_ENABLED") };
+        unsafe { std::env::remove_var("MIBEE_EYE_ONVIF_HTTP_DIGEST") };
+        unsafe { std::env::remove_var("MIBEE_EYE_ONVIF_IP_FILTER") };
+    }
+
+    #[test]
+    fn test_onvif_ip_filter_validation() {
+        // Well-formed entries (bare IPv4 and CIDR) pass.
+        let mut cfg = Config::default();
+        cfg.onvif.ip_filter = vec!["10.0.0.5".to_string(), "192.168.0.0/16".to_string()];
+        assert!(cfg.validate().is_ok());
+
+        // A malformed address is rejected with the entry named.
+        cfg.onvif.ip_filter = vec!["not-an-ip".to_string()];
+        let err = cfg.validate().unwrap_err();
+        assert!(format!("{err}").contains("not-an-ip"), "got: {err}");
+
+        // An out-of-range prefix is rejected too.
+        cfg.onvif.ip_filter = vec!["10.0.0.0/40".to_string()];
+        assert!(cfg.validate().is_err());
     }
 
     #[test]

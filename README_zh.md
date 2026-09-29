@@ -39,7 +39,7 @@ SPEC v1 Web UI/API、对接同样的 NVR —— 按部署画像选择：
 
 | 功能 | 状态 | 说明 |
 |------|------|------|
-| **ONVIF Profile S** | ✅ | Device/Media/Imaging SOAP 服务 + WS-Discovery（端口 8080） |
+| **ONVIF Profile S + Media2** | ✅ | Device/Media/PTZ/Imaging SOAP 服务 + Media2（ver20/media）+ Pull-Point/推送事件 + WS-Discovery（端口 8080） |
 | **RTSP 推流** | ✅ | H.264 视频流（端口 8554） |
 | **GB28181 设备端** | ✅ | SIP 注册（UDP/TCP）、Catalog/DeviceInfo/RecordInfo 查询、实时/回放/下载 PS 流、SIP INFO 回放控制、平台抓拍指令 —— 基于 [gb28181-rs](https://github.com/mickeyzzc/gb28181-rs) |
 | **GB 35114 A 级** | ✅ | 可选 SM2 证书注册认证 + keyed-SM3 完整性（`--features gb35114`） |
@@ -231,7 +231,10 @@ cp config.example.toml config.toml
 | `[rtmp]` | `enabled` / `url` | `false` / — | 推流到 RTMP 服务 |
 | `[onvif]` | `port` | 8080 | ONVIF SOAP/HTTP 端口 |
 | `[onvif]` | `password` | — | ONVIF 鉴权密码（务必设置！） |
-| `[onvif]` | `events_enabled` | `true` | Pull-Point 事件服务：AI 运动告警以 MotionAlarm 推送给订阅的 NVR |
+| `[onvif]` | `events_enabled` | `true` | Pull-Point 事件服务：AI 运动告警以 MotionAlarm 推送给订阅的 NVR（含 wsnt:Subscribe 推送接口） |
+| `[onvif]` | `media2_enabled` | `true` | Media2 服务（ver20/media，Profile-T 入口）挂载于 `/onvif/media2_service` |
+| `[onvif]` | `http_digest` | `false` | HTTP Digest 传输鉴权（MD5、qop=auth），与 WS-Security 并存 |
+| `[onvif]` | `ip_filter` | `[]` | 客户端白名单（IPv4 / CIDR）；名单外对端在 SOAP 处理前即被 403 拒绝 |
 | `[web]` | `port` | 8088 | Web 管理端口（凭证缺省沿用 ONVIF） |
 | `[gb28181]` | `enabled` | `false` | SIP 平台注册（`transport`：udp/tcp） |
 | `[recording]` | `enabled` | `false` | 连续 H.264 分段（600s / 保留 3 天 / 上限 8192MB） |

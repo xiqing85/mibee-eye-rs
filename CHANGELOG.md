@@ -13,6 +13,74 @@ Notable changes to MiBee Eye (Rust implementation) are documented here.
 > device-role coverage — see
 > [docs/roadmap-v0.3.0.md](docs/roadmap-v0.3.0.md)).
 
+## [0.5.0] — 2026-09-29
+
+Synchronized minor release with [mibee-eye-go](https://github.com/xiqing85/mibee-eye-go/releases/tag/v0.5.0) and [mibee-eye-notebook](https://github.com/xiqing85/mibee-eye-notebook/releases/tag/v0.5.0) (same version, same day).
+
+
+### Added
+
+- **ONVIF Media service completion** (onvif-device-rs 0.8): the
+  video-encoder configuration family (`GetVideoEncoderConfigurations`,
+  `GetVideoEncoderConfiguration`, `GetVideoEncoderConfigurationOptions`,
+  `SetVideoEncoderConfiguration`, guaranteed instances), honest empty
+  audio/OSD sets, and the media capabilities answer. Encoder writes land
+  in the shared media store both media faces read; the capture pipeline
+  applies new parameters on restart (logged INFO, never silently
+  claimed).
+- **`SetSynchronizationPoint` drives the IDR latch**: the ONVIF "make
+  the next frame a keyframe" request raises the same on-demand flag the
+  GB28181 `IFrameCmd` control uses, on both the Media1 and Media2 faces.
+- **ONVIF Media2 service** (ver20/media, the Profile-T entry path) on
+  `/onvif/media2_service`, gated by the new `[onvif] media2_enabled`
+  config key (default `true`; `false` restores the pre-Media2 wire
+  bytes exactly).
+- **ONVIF Imaging face**: `GetImagingSettings` / `SetImagingSettings` /
+  `GetOptions` / `Move` / `Stop` / `GetMoveOptions` over an honest
+  in-memory parameter store (reads reflect writes; the fixed-focus
+  OV5647 has no motor, focus commands acknowledge without acting).
+- **PTZ service completion**: configuration options, `SetConfiguration`,
+  home position (`GotoHomePosition` / `SetHomePosition`),
+  `SendAuxiliaryCommand` and the capabilities answer join the existing
+  eleven actions.
+- **Device service completion with host hooks**:
+  `SetSystemDateAndTime` is observed and logged but never adjusts the
+  system clock (network commands do not re-clock this device — same
+  policy as the SIP-Date watcher); `SystemReboot` /
+  `SetSystemFactoryDefault` are refused as effects and counted;
+  `GetSystemLog` / `GetSystemSupportInformation` return real
+  application summaries (version, uptime, camera line); `GetUsers`
+  lists the configured WS-Security account; the scopes / hostname /
+  discovery-mode / network-read / user-management family answers.
+- **HTTP Digest transport auth** (RFC 7616 subset: MD5, `qop="auth"`)
+  alongside WS-Security, gated by the new `[onvif] http_digest` config
+  key (default `false` — existing deployments' challenge bytes
+  unchanged).
+- **ONVIF IP address filter**: the new `[onvif] ip_filter` allow-list
+  (IPv4 / CIDR entries; empty = no filtering) gates the SOAP listener
+  per connection (403 before any processing) and backs the
+  `Get/Set/Add/RemoveIPAddressFilter` SOAP ops through one shared
+  state; an empty default `AccessPolicy` store serves
+  `Get/SetAccessPolicy`.
+- **Events push interface** (wsnt:Subscribe → Notify POSTs to the
+  consumer): obtained with zero product code on top of the existing
+  `enable_events()` wiring — covered by the new wire tests.
+
+### Changed
+
+- **onvif-device-rs pin** `1826726` → `02228fd`: the 0.8 completion
+  batches (device/media/PTZ/imaging, Media2, wsnt push, HTTP Digest +
+  IP filter + AccessPolicy) plus the GetServices/GetScopes WSDL shape
+  fixes (`Service` elements are direct children of
+  `GetServicesResponse`; `GetScopes` answers the `tds:Scopes` /
+  `tt:ScopeDef` / `tt:ScopeItem` form).
+- **ONVIF server assembly extracted** from `main.rs` into
+  `src/onvif_glue.rs::wire_onvif_server` (single wiring point shared
+  with `tests/onvif_wire.rs`, so the integration tests exercise exactly
+  the registration the product ships). The byte-stable NVR contract
+  responses (GetProfiles / GetStreamUri → MediaUri → Uri, snapshot URI,
+  capabilities advertisement) are pinned unchanged by the new tests.
+
 ## [0.4.0] — 2026-09-27
 
 Synchronized minor release with [mibee-eye-go](https://github.com/xiqing85/mibee-eye-go/releases/tag/v0.4.0) and [mibee-eye-notebook](https://github.com/xiqing85/mibee-eye-notebook/releases/tag/v0.4.0) (same version, same day).
@@ -54,7 +122,7 @@ Synchronized minor release with [mibee-eye-go](https://github.com/xiqing85/mibee
   onvif-device-rs carries the quick-xml 0.41 security migration
   (RUSTSEC-2026-0194/0195).
 
-## [Unreleased]
+### Added
 
 - **Low-resolution bandwidth-saving substream** (`[camera.substream]`,
   SPEC appendix A #20, default off): a second H.264 encoder session fed
