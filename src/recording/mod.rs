@@ -31,10 +31,18 @@ pub(crate) fn add_recorded_bytes(n: u64) {
 }
 
 /// Remove `n` bytes from the recording footprint (retention deleted data).
+///
+/// Manual CAS loop — the deprecated `fetch_update` replacement
+/// (`try_update`) tries once and would silently drop the subtraction
+/// under contention with `fetch_add`; this keeps the retry semantics.
 pub(crate) fn sub_recorded_bytes(n: u64) {
-    RECORDED_BYTES
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |b| {
-            Some(b.saturating_sub(n))
-        })
-        .ok();
+    let mut current = RECORDED_BYTES.load(Ordering::Relaxed);
+    while let Err(observed) = RECORDED_BYTES.compare_exchange(
+        current,
+        current.saturating_sub(n),
+        Ordering::Relaxed,
+        Ordering::Relaxed,
+    ) {
+        current = observed;
+    }
 }
