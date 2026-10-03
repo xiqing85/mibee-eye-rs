@@ -13,7 +13,7 @@ use tokio::net::TcpListener;
 
 use super::embedded;
 use super::error::WebError;
-use super::metrics::{self, AppMetrics};
+use super::metrics;
 use super::video_stream::{stream_mse_handler, stream_sub_mse_handler};
 use std::sync::Arc;
 
@@ -149,7 +149,6 @@ impl WebServer {
     /// Exposed as public so tests can exercise routing without binding.
     pub fn route(&self, state: Arc<api::AppState>) -> Router {
         metrics::init_metrics();
-        let _app_metrics = AppMetrics::register();
         Router::new()
             // Public (SPEC §1–2)
             .route("/api/health", get(health_check))
@@ -307,6 +306,26 @@ async fn onvif_placeholder() -> impl IntoResponse {
 ///
 /// This allows NVRs to send SOAP requests through the web port.
 async fn onvif_soap_post(State(state): State<Arc<api::AppState>>, body: String) -> Response {
+    // Request counter with the action's local name (best effort — the
+    // Body child element, e.g. `GetDeviceInformation`).
+    let action = body
+        .split("< soap:Body>")
+        .nth(1)
+        .or_else(|| body.split("<s:Body>").nth(1))
+        .or_else(|| body.split("<Body>").nth(1))
+        .and_then(|rest| {
+            rest.split('<').nth(1).map(|el| {
+                el.split([' ', '>'])
+                    .next()
+                    .unwrap_or("unknown")
+                    .rsplit(':')
+                    .next()
+                    .unwrap_or("unknown")
+                    .to_string()
+            })
+        })
+        .unwrap_or_else(|| "unknown".to_string());
+    ::metrics::counter!("mibee_onvif_requests_total", "action" => action.clone()).increment(1);
     let onvif_port = state.config.read().await.onvif.port;
 
     let mut stream = match tokio::net::TcpStream::connect(format!("127.0.0.1:{onvif_port}")).await {
@@ -387,6 +406,21 @@ fn soap_fault_response(reason: &str) -> Response {
 /// `X-Request-Id`), records a trace entry for `/api/*` calls, bumps the
 /// app-attributed HTTP traffic counters, and logs the outcome (which also
 /// lands in the observability log ring via the tee logger).
+/// `opentelemetry` [`Extractor`](opentelemetry::propagation::Extractor)
+/// over Axum's `HeaderMap` — the crate's built-in `http` helper sits
+/// behind a feature flag this build does not need otherwise.
+struct HeaderMapExtractor<'a>(&'a axum::http::HeaderMap);
+
+impl opentelemetry::propagation::Extractor for HeaderMapExtractor<'_> {
+    fn get(&self, key: &str) -> Option<&str> {
+        self.0.get(key).and_then(|v| v.to_str().ok())
+    }
+
+    fn keys(&self) -> Vec<&str> {
+        self.0.keys().map(|k| k.as_str()).collect()
+    }
+}
+
 async fn request_logger(
     axum::extract::State(state): axum::extract::State<Arc<api::AppState>>,
     request: Request<Body>,
@@ -394,6 +428,7 @@ async fn request_logger(
 ) -> impl IntoResponse {
     use axum::http::HeaderValue;
     use std::sync::atomic::Ordering;
+    use tracing::Instrument;
 
     let method = request.method().clone();
     let uri = request.uri().path().to_owned();
@@ -411,10 +446,30 @@ async fn request_logger(
         .http_rx
         .fetch_add(rx_bytes, Ordering::Relaxed);
 
-    let mut response = next.run(request).await;
+    // Call-chain span (SPEC v1 §3.3 / appendix A #37): adopts an inbound
+    // W3C `traceparent` as parent when present, so externally-collected
+    // traces continue into the device. No subscriber installed (tracing
+    // off) → the span is a cheap no-op.
+    use tracing_opentelemetry::OpenTelemetrySpanExt;
+    let parent_cx = opentelemetry::global::get_text_map_propagator(|propagator| {
+        propagator.extract(&HeaderMapExtractor(request.headers()))
+    });
+    let span = tracing::info_span!(
+        "http_request",
+        otel.name = format!("{} {}", method, uri),
+        method = %method,
+        path = %uri,
+        request_id = %request_id,
+        otel.status_code = tracing::field::Empty,
+    );
+    let _ = span.set_parent(parent_cx);
+    let mut response = next.run(request).instrument(span.clone()).await;
 
     let status = response.status();
     let elapsed = start.elapsed();
+    if status.is_client_error() || status.is_server_error() {
+        span.record("otel.status_code", "ERROR");
+    }
     let tx_bytes: u64 = response
         .headers()
         .get(axum::http::header::CONTENT_LENGTH)

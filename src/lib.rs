@@ -13,6 +13,7 @@ pub use gb28181_rs as gb28181;
 pub mod h264;
 pub mod hardware;
 pub mod motion;
+pub mod observability;
 pub mod onvif_alarm;
 // Product-side glue over the ONVIF Device stack (onvif-device-rs 0.8):
 // server wiring, imaging params, device hooks, IP-filter config parsing.

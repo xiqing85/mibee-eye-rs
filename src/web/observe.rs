@@ -641,10 +641,14 @@ impl log::Log for TeeLogger {
 }
 
 /// Install the tee logger exactly once. Later calls are no-ops (the `log`
-/// crate only accepts one global logger).
-pub fn init_logger(observe: Arc<Observe>) {
-    let env =
-        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).build();
+/// crate only accepts one global logger). `default_level` is the
+/// configured `[logging] level` — the fallback when RUST_LOG is unset
+/// (previously hardcoded to info; the config key was never wired).
+pub fn init_logger(observe: Arc<Observe>, default_level: &str) {
+    let env = env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or(default_level.to_string()),
+    )
+    .build();
     let max_level = env.filter();
     let _ = log::set_boxed_logger(Box::new(TeeLogger { env, observe }));
     log::set_max_level(max_level);

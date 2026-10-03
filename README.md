@@ -243,6 +243,7 @@ Key settings:
 | `[onvif]` | `media2_enabled` | `true` | Media2 service (ver20/media, Profile-T entry path) on `/onvif/media2_service` |
 | `[onvif]` | `http_digest` | `false` | HTTP Digest transport auth (MD5, qop=auth) alongside WS-Security |
 | `[onvif]` | `ip_filter` | `[]` | Client allow-list (IPv4 / CIDR); peers outside get 403 before SOAP processing |
+| `[observability]` | `otlp_endpoint` | `""` | OTLP gRPC endpoint for call-chain span export (Jaeger/Tempo/SigNoz collector, e.g. `http://collector:4317`). Empty = tracing off (zero cost); unreachable collector fails open |
 | `[web]` | `port` | 8088 | Web admin UI port (credentials mirror ONVIF by default) |
 | `[gb28181]` | `enabled` | `false` | SIP platform registration (`transport`: udp/tcp) |
 | `[recording]` | `enabled` | `false` | Continuous H.264 segments (600s / 3-day retention / 8192MB cap) |

@@ -29,6 +29,7 @@ use mibee_eye_raspi_rs::pipeline::bus::{EventBus, PipelineEvent};
 use mibee_eye_raspi_rs::streaming::rtsp::{RtspConfig, RtspServer};
 use mibee_eye_raspi_rs::web::events::global_hub;
 use mibee_eye_raspi_rs::web::server::WebServer;
+use tracing::Instrument;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -137,7 +138,21 @@ async fn main() {
     // diagnostics stay as visible as they were pre-extraction; RUST_LOG
     // overrides.
     let observe = std::sync::Arc::new(mibee_eye_raspi_rs::web::observe::Observe::new());
-    mibee_eye_raspi_rs::web::observe::init_logger(observe.clone());
+    // The full config loads below; the logger default level only needs
+    // the [logging] table, pre-parsed from the same file so the
+    // configured level applies from the very first record (RUST_LOG
+    // still wins).
+    let early_log_level = std::fs::read_to_string(resolve_config_path())
+        .ok()
+        .and_then(|t| toml::from_str::<toml::Value>(&t).ok())
+        .and_then(|v| {
+            v.get("logging")
+                .and_then(|l| l.get("level"))
+                .and_then(|s| s.as_str())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "info".to_string());
+    mibee_eye_raspi_rs::web::observe::init_logger(observe.clone(), &early_log_level);
     // Separate handle for the web server — the GB28181 task below moves its
     // own clone into the spawned supervision loop.
     let web_observe = observe.clone();
@@ -162,6 +177,11 @@ async fn main() {
         config.onvif.port,
         config.rtsp.port,
     );
+
+    // Internal call-chain span export (SPEC v1 §3.3 / appendix A #37):
+    // installs the tracing→OTLP subscriber only when an endpoint is
+    // configured — the span macros are no-ops otherwise.
+    mibee_eye_raspi_rs::observability::init_span_export(&config.observability.otlp_endpoint);
 
     let device_ip = detect_local_ip();
 
@@ -599,6 +619,8 @@ async fn main() {
                     // At boot the interface may still be coming up ("Network
                     // is unreachable") — retry with backoff instead of
                     // abandoning the protocol task until the next restart.
+                    // One span per supervision cycle: build + register
+                    // attempt incl. backoff retries (appendix A #37).
                     let server = retry_start(
                         || async {
                             let built = Gb28181Server::with_recording_index(
@@ -640,6 +662,10 @@ async fn main() {
                         Duration::from_secs(1),
                         Duration::from_secs(30),
                     )
+                    .instrument(tracing::info_span!(
+                        "gb28181_register",
+                        otel.name = "gb28181_register",
+                    ))
                     .await;
                     if *want_rx.borrow() {
                         // Exit requested while retrying — nothing to
@@ -1302,6 +1328,7 @@ async fn start_camera_pipeline(
                     au_hub.write(au);
                 }
                 Err(e) => {
+                    ::metrics::counter!("mibee_camera_errors_total").increment(1);
                     eprintln!("camera: {e}");
                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                 }

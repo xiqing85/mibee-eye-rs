@@ -327,6 +327,7 @@ impl Drop for RtspServer {
 // ============================================================================
 
 /// Handle a single RTSP client connection.
+#[tracing::instrument(name = "rtsp_session", skip_all, fields(otel.name = "rtsp_session"))]
 async fn handle_connection(
     mut stream: TcpStream,
     inner: Arc<Mutex<Inner>>,
@@ -337,6 +338,8 @@ async fn handle_connection(
     let peer_addr = stream
         .peer_addr()
         .unwrap_or(std::net::SocketAddr::from(([0, 0, 0, 0], 0)));
+    ::metrics::counter!("mibee_rtsp_connections_total").increment(1);
+    tracing::Span::current().record("peer", tracing::field::display(peer_addr));
     let (mut reader, mut writer) = stream.split();
 
     // Buffer for reading RTSP requests.
@@ -1425,6 +1428,10 @@ async fn handle_play(
         StreamMount::Sub => sub_au_hub,
     };
     let subscriber = hub.subscribe();
+    // Active-subscriber gauge follows the hub's registration count
+    // (main + sub mounts share the family).
+    ::metrics::gauge!("mibee_active_subscribers")
+        .set(au_hub.subscriber_count() as f64 + sub_au_hub.subscriber_count() as f64);
     let (tx, rx) = tokio::sync::mpsc::channel::<AccessUnit>(64);
 
     // Spawn blocking task to bridge sync receiver to async channel.
@@ -1434,6 +1441,10 @@ async fn handle_play(
                 break;
             }
         }
+        // Sender gone → the subscriber is deregistered on drop; refresh
+        // the gauge from the surviving sessions via a fresh read of the
+        // hubs (both moved into this closure's outer scope clones).
+        ::metrics::gauge!("mibee_active_subscribers").decrement(1.0);
     });
 
     *frame_bridge = Some(rx);

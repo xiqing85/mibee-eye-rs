@@ -252,8 +252,19 @@ async fn run_inner(
             // Start a new segment if none is open (first IDR or after roll).
             if segment.is_none() {
                 match Segment::open(&root, now, now_ms) {
-                    Ok(seg) => segment = Some(seg),
+                    Ok(seg) => {
+                        ::metrics::counter!("mibee_storage_segments_total").increment(1);
+                        let _span = tracing::info_span!(
+                            "recording_segment",
+                            otel.name = "recording_segment",
+                            path = %seg.path.display().to_string(),
+                        )
+                        .entered();
+                        segment = Some(seg);
+                    }
                     Err(e) => {
+                        ::metrics::counter!("mibee_camera_errors_total", "kind" => "record_open")
+                            .increment(1);
                         eprintln!("recording: failed to open segment: {e}");
                         RECORD_ACTIVE.store(false, Ordering::SeqCst);
                         return Ok(());
