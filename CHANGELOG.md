@@ -2,6 +2,26 @@
 
 Notable changes to MiBee Eye (Rust implementation) are documented here.
 
+## [Unreleased]
+
+### Added
+
+- **OTLP call-chain span export** (SPEC v1 §3.3 + appendix A #37): new
+  `[observability] otlp_endpoint` config key (default empty = off). When
+  set, a tracing→OTLP gRPC subscriber exports spans for HTTP requests
+  (W3C `traceparent` adopted as parent), RTSP sessions, GB28181
+  registration cycles, AI inference and recording segments to external
+  collectors (Jaeger/Tempo/SigNoz). Off = span macros are no-ops.
+- Wired previously-dead `AppMetrics` counters to real call sites:
+  RTSP connections, ONVIF requests (by SOAP action), storage segments,
+  motion events, camera errors, active subscribers (the dead handle
+  struct itself is gone — call sites emit directly).
+
+### Fixed
+
+- `[logging] level` is now honoured as the logger's default filter
+  (previously only `RUST_LOG` applied; the config key was never wired).
+
 > **Release cadence** — minor versions (x.y.0, capability packages) are
 > synchronized with the Go implementation
 > ([mibee-eye-go](https://github.com/xiqing85/mibee-eye-go)): same

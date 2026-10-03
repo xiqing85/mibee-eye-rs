@@ -263,6 +263,14 @@ serial_number = ""
 # --------------------------------------------------------------------------
 # Logging settings
 # --------------------------------------------------------------------------
+[observability]
+# type: string | default: "" | env: MIBEE_EYE_OBSERVABILITY_OTLP_ENDPOINT
+# OTLP gRPC endpoint for internal call-chain span export (Jaeger/Tempo/
+# SigNoz collector, convention "http://collector:4317"). Empty = tracing
+# off (span macros are no-ops, zero cost). Fail-open: unreachable
+# collector only logs a warning.
+otlp_endpoint = ""
+
 [logging]
 
 # Log level: "debug", "info", "warn", "error"

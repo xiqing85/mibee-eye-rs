@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 use tokio::sync::RwLock as AsyncRwLock;
+use tracing::Instrument;
 
 pub mod guardrails;
 pub mod mock;
@@ -175,7 +176,19 @@ impl AiModule {
                 // lock during inference) so model swaps apply from the next
                 // iteration on.
                 let detector = detector.read().expect("detector slot lock").clone();
-                match detector.detect(&data, width, height).await {
+                // Call-chain span (appendix A #37) wraps the inference
+                // itself — no subscriber installed → no-op. `instrument`
+                // (not an entered guard) so the future stays Send.
+                let inference_span = tracing::info_span!(
+                    "ai_inference",
+                    otel.name = "ai_inference",
+                    model = %detector.model_name(),
+                );
+                match detector
+                    .detect(&data, width, height)
+                    .instrument(inference_span)
+                    .await
+                {
                     Ok(mut detections) => {
                         ::metrics::counter!("mibee_ai_inferences_total").increment(1);
                         // Filter detections by confidence threshold.

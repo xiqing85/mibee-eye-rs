@@ -505,6 +505,15 @@ pub struct LoggingConfig {
     pub level: String,
 }
 
+/// OTLP span-export settings (SPEC v1 §3.3 / appendix A #37). Empty
+/// endpoint = tracing stays off (span macros are no-ops).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ObservabilityConfig {
+    /// OTLP gRPC endpoint (convention `http://collector:4317`).
+    #[serde(default)]
+    pub otlp_endpoint: String,
+}
+
 /// Local storage path settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocalStorageConfig {
@@ -706,6 +715,9 @@ pub struct Config {
     pub device: DeviceConfig,
     #[serde(default)]
     pub logging: LoggingConfig,
+    /// Observability (SPEC v1 §3.3 / appendix A #37): OTLP span export.
+    #[serde(default)]
+    pub observability: ObservabilityConfig,
     #[serde(default)]
     pub storage: StorageConfig,
     #[serde(default)]
@@ -1068,6 +1080,7 @@ impl Default for Config {
             web: WebConfig::default(),
             device: default_device_config(),
             logging: LoggingConfig::default(),
+            observability: ObservabilityConfig::default(),
             storage: StorageConfig::default(),
             recording: RecordingConfig::default(),
             watermark: WatermarkConfig::default(),
@@ -1371,6 +1384,12 @@ fn apply_env_overrides(config: &mut Config) {
 
     // --- logging ---
     override_str("MIBEE_EYE_LOGGING_LEVEL", &mut config.logging.level);
+
+    // --- observability ---
+    override_str(
+        "MIBEE_EYE_OBSERVABILITY_OTLP_ENDPOINT",
+        &mut config.observability.otlp_endpoint,
+    );
 }
 
 fn override_str(name: &str, dest: &mut String) {
@@ -1470,8 +1489,31 @@ mod tests {
     }
 
     #[test]
+    fn observability_section_parses_and_defaults() {
+        let cfg: Config = toml::from_str("").expect("empty doc = defaults");
+        assert_eq!(cfg.observability.otlp_endpoint, "");
+
+        let cfg: Config =
+            toml::from_str("[observability]\notlp_endpoint = \"http://collector:4317\"")
+                .expect("section parses");
+        assert_eq!(cfg.observability.otlp_endpoint, "http://collector:4317");
+    }
+
+    #[test]
+    fn observability_env_override_applies() {
+        let _guard = ENV_LOCK.lock();
+        unsafe { std::env::set_var("MIBEE_EYE_OBSERVABILITY_OTLP_ENDPOINT", "http://env:4317") };
+        let mut cfg = Config::default();
+        apply_env_overrides(&mut cfg);
+        assert_eq!(cfg.observability.otlp_endpoint, "http://env:4317");
+        unsafe { std::env::remove_var("MIBEE_EYE_OBSERVABILITY_OTLP_ENDPOINT") };
+    }
+
+    #[test]
     fn test_default_values() {
         let cfg = Config::default();
+        // observability (SPEC v1 §3.3 / appendix A #37): OTLP off by default
+        assert_eq!(cfg.observability.otlp_endpoint, "");
         // camera
         assert_eq!(cfg.camera.device, "/dev/video0");
         assert_eq!(cfg.camera.mode, "mtxrpicam");

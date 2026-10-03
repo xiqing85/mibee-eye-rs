@@ -27,6 +27,16 @@ argon2 = "0.5"
 # Metrics / Prometheus
 metrics = "0.23"
 metrics-exporter-prometheus = { version = "0.15", default-features = false, features = ["http-listener"] }
+# Internal call-chain tracing (SPEC v1 §3.3 / appendix A #37): spans only —
+# console logging stays on the `log` facade (TeeLogger); the tracing
+# subscriber is installed solely when OTLP export is configured, so the
+# span macros are no-ops at zero cost when tracing is off.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["registry"] }
+tracing-opentelemetry = "0.33"
+opentelemetry = "0.32"
+opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic"] }
+opentelemetry_sdk = { version = "0.32", features = ["rt-tokio"] }
 # Web snapshot/streaming (YUV→JPEG)
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 async-stream = "0.3"

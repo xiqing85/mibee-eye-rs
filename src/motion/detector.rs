@@ -212,6 +212,7 @@ impl MotionDetector {
         let score = changed_count as f64 / (det_w * det_h) as f64;
 
         self.last_event = Some(now);
+        ::metrics::counter!("mibee_motion_events_total").increment(1);
 
         Some(MotionEvent {
             bbox,
