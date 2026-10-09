@@ -46,10 +46,12 @@ fontdue = "0.9"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 # stdout logging for the protocol libraries (they use the `log` facade)
 env_logger = "0.11"
-# GB/T 28181 device stack (extracted library) — v0.12.0 is the 2022
-# device-side closure package; the previous git pins (fcdb5fa era) are
-# all contained in this release.
-gb28181-rs = "0.12.0"
+# GB/T 28181 device stack (extracted library). v0.12.0 is the 2022
+# device-side closure package; main @ ef6c958 additionally carries the
+# snapshot channel fix (gb28181-go #107 twin: DeviceConfig+SnapShotConfig
+# wire form — real-platform snapshot requests parse again). Pin flips
+# back to a crates.io version at the next library release.
+gb28181-rs = { git = "https://github.com/mickeyzzc/gb28181-rs.git", rev = "ef6c958" }
 # ONVIF Device stack (extracted library). main @ 02228fd carries the
 # device/media/PTZ/imaging completion batches (issues #47-#58), the
 # Media2 ver20 service (#53/#61), the wsnt push-subscription interface
