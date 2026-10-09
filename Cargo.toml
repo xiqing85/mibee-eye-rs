@@ -51,7 +51,7 @@ env_logger = "0.11"
 # snapshot channel fix (gb28181-go #107 twin: DeviceConfig+SnapShotConfig
 # wire form — real-platform snapshot requests parse again). Pin flips
 # back to a crates.io version at the next library release.
-gb28181-rs = { git = "https://github.com/mickeyzzc/gb28181-rs.git", rev = "ef6c958" }
+gb28181-rs = { git = "https://github.com/mickeyzzc/gb28181-rs.git", rev = "d2f21c5" }
 # ONVIF Device stack (extracted library). main @ 02228fd carries the
 # device/media/PTZ/imaging completion batches (issues #47-#58), the
 # Media2 ver20 service (#53/#61), the wsnt push-subscription interface
