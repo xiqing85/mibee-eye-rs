@@ -6,7 +6,7 @@ Notable changes to MiBee Eye (Rust implementation) are documented here.
 
 ### Added
 
-- **GB28181 transport parity package** (library pin `b400d2b`): catalog
+- **GB28181 transport parity package** (gb28181-rs 0.13.0, onvif-device-rs 0.9.0 — crates.io): catalog
   and record answers now paginate over multiple MESSAGEs (A.2.6.1/4),
   negotiated REGISTER expiry, CANCEL handling, platform-silence
   detection and honest Subscription-State come in automatically; new

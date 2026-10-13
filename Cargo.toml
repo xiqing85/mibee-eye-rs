@@ -46,20 +46,15 @@ fontdue = "0.9"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 # stdout logging for the protocol libraries (they use the `log` facade)
 env_logger = "0.11"
-# GB/T 28181 device stack (extracted library). main @ b400d2b carries the
-# 2022 closure package plus the transport/media parity waves: catalog and
-# record pagination, tcp-out / tls / tls-listen transports with redial,
-# subscriptions and async exchanges over streams, passive TCP media,
-# multi-channel catalog, the InfoQueryProvider seam and multicast TTL.
-# Pin flips back to a crates.io version at the next library release.
-gb28181-rs = { git = "https://github.com/mickeyzzc/gb28181-rs.git", rev = "b400d2b" }
-# ONVIF Device stack (extracted library). main @ 02228fd carries the
-# device/media/PTZ/imaging completion batches (issues #47-#58), the
-# Media2 ver20 service (#53/#61), the wsnt push-subscription interface
-# (#50/#62), HTTP Digest + IP filter + AccessPolicy (#54/#63) on top of
-# the quick-xml 0.41 migration, and the WSDL shape fixes for GetServices
-# / GetScopes (issues #64/#65, cross-library interop findings).
-onvif-device-rs = { git = "https://github.com/mickeyzzc/onvif-rs.git", rev = "02228fd" }
+# GB/T 28181 device stack (extracted library). v0.13.0 is the
+# transport-parity package: pagination, tcp-out/tls/tls-listen with
+# redial, subscriptions and async exchanges over streams, passive TCP
+# media, multi-channel catalog, the InfoQueryProvider seam, multicast.
+gb28181-rs = "0.13.0"
+# ONVIF Device stack (extracted library). 0.9.0 adds the client half
+# (auth ladder, ten domains, discovery, push subscriptions, analytics,
+# HTTP Digest) — the product uses the server half, unchanged.
+onvif-device-rs = "0.9.0"
 anyhow = "1"
 # AI inference (ONNX Runtime) — optional, behind `ai` feature
 # load-dynamic: no C++ linking at compile time; libonnxruntime.so loaded at runtime via ORT_DYLIB_PATH
