@@ -46,12 +46,13 @@ fontdue = "0.9"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 # stdout logging for the protocol libraries (they use the `log` facade)
 env_logger = "0.11"
-# GB/T 28181 device stack (extracted library). v0.12.0 is the 2022
-# device-side closure package; main @ ef6c958 additionally carries the
-# snapshot channel fix (gb28181-go #107 twin: DeviceConfig+SnapShotConfig
-# wire form — real-platform snapshot requests parse again). Pin flips
-# back to a crates.io version at the next library release.
-gb28181-rs = { git = "https://github.com/mickeyzzc/gb28181-rs.git", rev = "d2f21c5" }
+# GB/T 28181 device stack (extracted library). main @ b400d2b carries the
+# 2022 closure package plus the transport/media parity waves: catalog and
+# record pagination, tcp-out / tls / tls-listen transports with redial,
+# subscriptions and async exchanges over streams, passive TCP media,
+# multi-channel catalog, the InfoQueryProvider seam and multicast TTL.
+# Pin flips back to a crates.io version at the next library release.
+gb28181-rs = { git = "https://github.com/mickeyzzc/gb28181-rs.git", rev = "b400d2b" }
 # ONVIF Device stack (extracted library). main @ 02228fd carries the
 # device/media/PTZ/imaging completion batches (issues #47-#58), the
 # Media2 ver20 service (#53/#61), the wsnt push-subscription interface
@@ -62,7 +63,10 @@ onvif-device-rs = { git = "https://github.com/mickeyzzc/onvif-rs.git", rev = "02
 anyhow = "1"
 # AI inference (ONNX Runtime) — optional, behind `ai` feature
 # load-dynamic: no C++ linking at compile time; libonnxruntime.so loaded at runtime via ORT_DYLIB_PATH
-ort = { version = "2.0.0-rc.13", optional = true, default-features = false, features = ["load-dynamic"] }
+# Pinned exactly: 2.0.0-rc.14 breaks Session::builder() (needs &Environment)
+# and rc-series bumps are breaking by nature — adopt deliberately, with a
+# device regression pass, not via lockfile-free CI resolution.
+ort = { version = "=2.0.0-rc.13", optional = true, default-features = false, features = ["load-dynamic"] }
 core_affinity = { version = "0.8", optional = true }
 openh264 = { version = "0.9.8", optional = true }
 # Remote storage backends — optional, pure-Rust TLS (rustls) so the musl
@@ -88,6 +92,9 @@ multi-camera = []
 # GB 35114 A-level security (SM2 cert REGISTER auth + keyed-SM3 Note
 # integrity). Compile-time opt-in like the Go twin's -tags gb35114.
 gb35114 = ["gb28181-rs/gb35114"]
+# SIPS transports (tcp-out dial + tls-listen inbound). Opt-in like the
+# library's own `tls` feature so default builds stay ring-free.
+tls = ["gb28181-rs/tls"]
 webrtc = []
 h265 = []
 v4l2-encoder = ["shiguredo_v4l2"]

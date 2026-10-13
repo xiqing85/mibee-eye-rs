@@ -236,7 +236,7 @@ cp config.example.toml config.toml
 | `[onvif]` | `http_digest` | `false` | HTTP Digest 传输鉴权（MD5、qop=auth），与 WS-Security 并存 |
 | `[onvif]` | `ip_filter` | `[]` | 客户端白名单（IPv4 / CIDR）；名单外对端在 SOAP 处理前即被 403 拒绝 |
 | `[web]` | `port` | 8088 | Web 管理端口（凭证缺省沿用 ONVIF） |
-| `[gb28181]` | `enabled` | `false` | SIP 平台注册（`transport`：udp/tcp） |
+| `[gb28181]` | `enabled` | `false` | SIP 平台注册（`transport`：udp/tcp/tcp-out/tls/tls-listen——后三个需 `tls` 构建特性） |
 | `[recording]` | `enabled` | `false` | 连续 H.264 分段（600s / 保留 3 天 / 上限 8192MB） |
 | `[storage.local]` | `path` / `retention_days` | — | 录像目录与保留期 |
 | `[watermark]` | `enabled` / `text` | `false` / — | OSD 水印：文字 + 实时钟、位置、字号、字体路径 |

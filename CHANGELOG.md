@@ -6,6 +6,15 @@ Notable changes to MiBee Eye (Rust implementation) are documented here.
 
 ### Added
 
+- **GB28181 transport parity package** (library pin `b400d2b`): catalog
+  and record answers now paginate over multiple MESSAGEs (A.2.6.1/4),
+  negotiated REGISTER expiry, CANCEL handling, platform-silence
+  detection and honest Subscription-State come in automatically; new
+  opt-in transports `tcp-out` (device dials the platform, full
+  register/keepalive lifecycle with redial), `tls` and `tls-listen`
+  (SIPS, behind the new `tls` build feature), plus `multicast_ttl` and
+  `extra_channels` library config keys; `MIBEE_EYE_GB28181_TRANSPORT`
+  accepts all five transport values.
 - **OTLP call-chain span export** (SPEC v1 §3.3 + appendix A #37): new
   `[observability] otlp_endpoint` config key (default empty = off). When
   set, a tracing→OTLP gRPC subscriber exports spans for HTTP requests

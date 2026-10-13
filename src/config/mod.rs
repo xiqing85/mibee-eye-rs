@@ -1295,6 +1295,9 @@ fn apply_env_overrides(config: &mut Config) {
         config.gb28181.transport = match v.to_lowercase().as_str() {
             "udp" => Transport::Udp,
             "tcp" => Transport::Tcp,
+            "tcp-out" => Transport::TcpOut,
+            "tls" => Transport::Tls,
+            "tls-listen" => Transport::TlsListen,
             _ => {
                 eprintln!(
                     "warning: invalid MIBEE_EYE_GB28181_TRANSPORT value '{}', using udp",
