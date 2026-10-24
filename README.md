@@ -210,7 +210,7 @@ resulting binary loads `libonnxruntime.so` at runtime (see
 make deploy-cross REMOTE_HOST=pi@192.168.1.100
 ```
 
-See the [deployment guide on mibeecam docs](https://www.mlsbs.top/docs/mibeecam)
+See the deployment sections in [README.md](README.md) and [docs/](docs/README.md).
 for detailed deployment instructions.
 
 ---
