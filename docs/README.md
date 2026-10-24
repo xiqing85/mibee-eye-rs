@@ -12,7 +12,3 @@
 - `features/webrtc.md` — WebRTC（规划中）：信令/ICE/DTLS/SRTP 路线对比
 - `features/h265.md` — H.265 编码（规划中）：硬件 M2M 与软件回退路线
 - `nvr-integration-notes.md` — NVR 互操作与流媒体排障工程笔记
-
-面向用户的中文部署手册另见
-[mlsbs.top 文档站](https://www.mlsbs.top/docs/mibeecam)（与仓库 README
-内容独立维护）。

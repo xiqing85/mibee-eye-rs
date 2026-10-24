@@ -203,7 +203,7 @@ AI 特性同样随 `make cross-build` 构建（`--features ai`），
 make deploy-cross REMOTE_HOST=pi@192.168.1.100
 ```
 
-详细部署指南见 [mibeecam 文档站](https://www.mlsbs.top/docs/mibeecam)。
+详细部署说明见 [README](README_zh.md) 部署章节与 [docs/](docs/README.md)。
 
 ---
 
