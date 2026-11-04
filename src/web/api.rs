@@ -66,6 +66,9 @@ pub struct AppState {
     /// Observability state (SPEC §3.2): sampler snapshot, log ring,
     /// request-trace ring, and app-attributed traffic counters.
     pub observe: Arc<crate::web::observe::Observe>,
+    /// Thermal subsystem (SPEC §3.7) — present only when `[thermal]`
+    /// enabled; gates the thermal endpoints + capability key.
+    pub thermal: Option<Arc<crate::thermal::ThermalService>>,
 }
 
 /// Current PTZ position.
@@ -106,6 +109,7 @@ impl Default for AppState {
             restart_action: None,
             started: std::time::Instant::now(),
             observe: Arc::new(crate::web::observe::Observe::new()),
+            thermal: None,
         }
     }
 }
@@ -196,6 +200,22 @@ pub async fn capabilities_handler(State(state): State<Arc<AppState>>) -> Json<se
     if cfg.features.ai.enabled {
         events.push("alarm");
     }
+    // SPEC §3.7 thermal: the side-sensor subsystem advertises readings +
+    // hardware bring-up only when it actually runs; `available` follows the
+    // first trusted frame so the webui card can distinguish "warming up /
+    // no module" from "not a thermal device" (key absent).
+    let thermal = state.thermal.as_ref().map(|t| {
+        serde_json::json!({
+            "available": t.available(),
+            "radiometric": t.radiometric(),
+            "max_fps": 8.0,
+            "rules": 0,
+            "hardware": true,
+        })
+    });
+    if thermal.is_some() {
+        events.push("thermal.temperature");
+    }
     ok_env(serde_json::json!({
         "spec_version": "1",
         "device": {
@@ -220,6 +240,7 @@ pub async fn capabilities_handler(State(state): State<Arc<AppState>>) -> Json<se
         "mse": state.au_hub.is_some(),
         "substream": state.sub_au_hub.is_some(),
         "webrtc": false,
+        "thermal": thermal,
         "events": events,
         "config_apply": {"default": "restart", "sections": {"recording": "restart", "watermark": "restart"}},
         "restart": true,

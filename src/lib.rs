@@ -29,5 +29,6 @@ pub mod ptz {
 pub mod recording;
 pub mod storage;
 pub mod streaming;
+pub mod thermal;
 pub mod watermark;
 pub mod web;
