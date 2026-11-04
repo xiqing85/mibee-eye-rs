@@ -852,6 +852,25 @@ async fn main() {
     if let Some(bus) = ai_event_bus {
         web = web.with_event_bus(bus);
     }
+
+    // Thermal side sensor (SPEC §3.7): MLX90640 radiometric readings for
+    // dual-spectrum devices. The hardware overlay (written by the web
+    // hardware card) overrides bus/address from discovery runs. Fail-open:
+    // a missing module keeps the subsystem in warmup — endpoints answer
+    // honestly with trusted:false instead of taking the camera down.
+    if config.thermal.enabled {
+        let overlay = std::path::Path::new(&config_path).with_file_name("thermal-hardware.toml");
+        let mut thermal_cfg = config.thermal.clone();
+        if let Some((bus, addr)) = mibee_eye_raspi_rs::thermal::load_overlay(&overlay) {
+            println!("thermal: hardware overlay applied ({})", overlay.display());
+            thermal_cfg.bus = bus;
+            thermal_cfg.addr = addr;
+        }
+        let svc = mibee_eye_raspi_rs::thermal::ThermalService::start(&thermal_cfg);
+        svc.set_persist_path(Some(overlay));
+        mibee_eye_raspi_rs::thermal::spawn_sse_pump(std::sync::Arc::clone(&svc));
+        web = web.with_thermal(svc);
+    }
     println!("web: listening on :{}", config.web.port);
     if let Err(e) = web.start(config, config_path.clone()).await {
         eprintln!("web: fatal â {e}");

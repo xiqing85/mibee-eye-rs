@@ -7,4 +7,5 @@ pub mod fmp4;
 pub mod metrics;
 pub mod observe;
 pub mod server;
+pub mod thermal_api;
 pub mod video_stream;
