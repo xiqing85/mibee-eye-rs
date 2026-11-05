@@ -1,13 +1,18 @@
 //! Thermal subsystem (SPEC §3.7): an MLX90640 radiometric side sensor for
 //! dual-spectrum devices — absolute temperature readings + pseudo-color
 //! snapshots + web hardware bring-up (pins/bus/address config, discovery
-//! scan). Ported from the mibee-eye-thermal bring-up repo; the GB28181
-//! channel stays the visible-light camera, this module only feeds the
-//! family readings surface (webui thermal card, SSE `thermal.temperature`).
+//! scan). Ported from the mibee-eye-thermal bring-up repo; the main
+//! GB28181/RTSP channels stay the visible-light camera, and
+//! [`gb_stream`] (software-encoder builds) adds the thermal view as a
+//! second GB device instance.
 //!
 //! Bus ownership follows the proven single-mutex design: the poll loop
 //! holds `pass` for one read pass, a scan sweep acquires it for the probe
 //! walk — whoever holds it owns the pins.
+
+/// Temperature over-limit alarm (rs#3 M4): pure state machine + the 1 Hz
+/// task that sends GB alarm NOTIFYs from the thermal device instance.
+pub mod alarm;
 
 pub mod ee;
 pub mod error;
@@ -15,6 +20,13 @@ pub mod i2c;
 pub mod mlx90640;
 pub mod render;
 pub mod scan;
+
+/// Thermal H.264 GB channel (openh264 render→encode loop feeding the
+/// second GB28181 device instance). Needs the software encoder feature
+/// (default on); builds without it simply have no thermal GB channel and
+/// main refuses the config at boot.
+#[cfg(feature = "software-encoder")]
+pub mod gb_stream;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -164,6 +176,8 @@ struct ReadingState {
 }
 
 pub struct ThermalService {
+    hflip: bool,
+    vflip: bool,
     hw: Arc<HardwareCtl>,
     state: RwLock<ReadingState>,
     stop: Arc<AtomicBool>,
@@ -292,6 +306,8 @@ impl ThermalService {
     pub fn start(cfg: &ThermalConfig) -> Arc<Self> {
         let (bus, addr) = (cfg.bus.clone(), cfg.addr);
         let svc = Arc::new(Self {
+            hflip: cfg.hflip,
+            vflip: cfg.vflip,
             hw: Arc::new(HardwareCtl::new(bus, addr)),
             state: RwLock::new(ReadingState {
                 frame_number: 0,
@@ -335,6 +351,12 @@ impl ThermalService {
 
     pub fn stop(&self) {
         self.stop.store(true, Ordering::Relaxed);
+    }
+
+    /// Whether [`ThermalService::stop`] was requested (the GB encoder
+    /// thread polls this instead of owning the service).
+    pub fn is_stopped(&self) -> bool {
+        self.stop.load(Ordering::Relaxed)
     }
 
     /// SPEC §3.7 payload: `current` (grid=true) and the SSE shape
@@ -396,6 +418,25 @@ impl ThermalService {
 
     pub fn persist_path(&self) -> Option<std::path::PathBuf> {
         self.persist_path.read().expect("persist lock").clone()
+    }
+}
+
+/// Apply the configured mount orientation in place — one flip here and
+/// every consumer downstream (grid JSON, snapshot, SSE, hover, NVR
+/// readout) sees the same corrected frame.
+fn flip_grid(to: &mut [f32; PIXELS], h: bool, v: bool) {
+    if h {
+        for y in 0..HEIGHT {
+            to[y * WIDTH..y * WIDTH + WIDTH].reverse();
+        }
+    }
+    if v {
+        for x in 0..WIDTH {
+            for i in 0..HEIGHT / 2 {
+                let (a, b) = (i, HEIGHT - 1 - i);
+                to.swap(a * WIDTH + x, b * WIDTH + x);
+            }
+        }
     }
 }
 
@@ -464,8 +505,9 @@ fn poll_loop(svc: Arc<ThermalService>, emissivity: f64) {
         })();
         let mut st = svc.state.write().expect("thermal state lock");
         match pass {
-            Some((to, common, _aux)) => {
+            Some((mut to, common, _aux)) => {
                 failures = 0;
+                flip_grid(&mut to, svc.hflip, svc.vflip);
                 st.sensor_fps = 1.0f32 / started.elapsed().as_secs_f32().max(1.0 / 32.0);
                 st.frame_number = st.frame_number.wrapping_add(1);
                 st.timestamp_ms = now_ms();
@@ -565,6 +607,27 @@ mod tests {
     }
 
     #[test]
+    fn flip_grid_orientations() {
+        let mut g = [0f32; PIXELS];
+        for (i, v) in g.iter_mut().enumerate() {
+            *v = i as f32;
+        }
+        let mut h = g;
+        flip_grid(&mut h, true, false);
+        assert_eq!(h[0], 31.0); // first row reversed
+        assert_eq!(h[31], 0.0);
+        assert_eq!(h[32], 63.0); // rows keep order under hflip
+        let mut v = g;
+        flip_grid(&mut v, false, true);
+        assert_eq!(v[0], 736.0); // first col swapped with last row
+        let mut hv = g;
+        flip_grid(&mut hv, true, true);
+        assert_eq!(hv[0], 767.0); // 180°
+        flip_grid(&mut hv, true, true); // involution
+        assert_eq!(hv[0], 0.0);
+    }
+
+    #[test]
     fn payload_shape_warmup_then_fields() {
         let svc = dummy_service();
         let v = svc.payload(true);
@@ -593,6 +656,8 @@ mod tests {
 
     fn dummy_service() -> Arc<ThermalService> {
         Arc::new(ThermalService {
+            hflip: false,
+            vflip: false,
             hw: Arc::new(HardwareCtl::new(BusSpec::Auto, 0x33)),
             state: RwLock::new(ReadingState {
                 frame_number: 0,

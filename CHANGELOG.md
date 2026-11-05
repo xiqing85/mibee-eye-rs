@@ -6,6 +6,22 @@ Notable changes to MiBee Eye (Rust implementation) are documented here.
 
 ### Added
 
+- **Thermal GB channel** (dual-spectrum "plan A", gb28181-rs 0.14.1): new
+  `[gb28181_thermal]` section runs a second GB28181 device instance that
+  streams the rendered MLX90640 view (ironbow + temperature OSD →
+  openh264 320×240, default 4 fps / 300 kbps / IDR 12) with catalog
+  `PhotoelectricImagingType = 2`, independent device ID (default reuses
+  the retired thermal device number 34020000001320000003) and SIP port
+  5061; platform coordinates and the SIP password inherit from
+  `[gb28181]`. Needs `[thermal] enabled`; sensor loss freezes the last
+  grid instead of dropping the stream; both instances deregister
+  (REGISTER Expires: 0) on SIGTERM/restart.
+- **Temperature over-limit alarm** (rs#3 M4): new `[thermal.alarm]`
+  section — sustained-above-threshold edge (sustain window + hysteresis
+  + cooldown) sends a GB alarm NOTIFY from the thermal GB instance:
+  `AlarmMethod=2` + `AlarmType=4`（高温报警, 2022 A.2.5.5 code table）+
+  configurable `AlarmPriority` (default 1 = 火警级). Untrusted readings
+  hold the state machine (a lost sensor neither fires nor clears).
 - **GB28181 transport parity package** (gb28181-rs 0.13.0, onvif-device-rs 0.9.0 — crates.io): catalog
   and record answers now paginate over multiple MESSAGEs (A.2.6.1/4),
   negotiated REGISTER expiry, CANCEL handling, platform-silence

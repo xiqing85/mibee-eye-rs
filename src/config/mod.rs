@@ -586,6 +586,18 @@ pub struct ThermalConfig {
     /// Emissivity for the To chain (user calibration, 0 < ε ≤ 1).
     #[serde(default = "default_thermal_emissivity")]
     pub emissivity: f64,
+    /// Orientation of the module mount relative to the scene (module
+    /// readout origin vs. physical left/right / top/bottom). Applied once
+    /// per frame so every consumer (grid, snapshot, SSE, NVR readout)
+    /// sees the same corrected orientation.
+    #[serde(default)]
+    pub hflip: bool,
+    #[serde(default)]
+    pub vflip: bool,
+    /// Temperature over-limit alarm (rs#3 M4): GB alarm NOTIFY from the
+    /// thermal device instance (needs `[gb28181_thermal]`).
+    #[serde(default)]
+    pub alarm: crate::thermal::alarm::TempAlarmConfig,
 }
 
 fn default_thermal_bus() -> BusSpec {
@@ -605,6 +617,88 @@ impl Default for ThermalConfig {
             bus: default_thermal_bus(),
             addr: default_thermal_addr(),
             emissivity: default_thermal_emissivity(),
+            hflip: false,
+            vflip: false,
+            alarm: crate::thermal::alarm::TempAlarmConfig::default(),
+        }
+    }
+}
+
+/// Thermal GB channel settings (rs#3 "plan A" — second GB28181 device
+/// instance for the thermal view). Platform address/port, SIP domain,
+/// register/heartbeat cadence and the SIP password are inherited from
+/// `[gb28181]`; only what must differ for a second device lives here.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Gb28181ThermalConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Second device's 20-digit GB ID (the retired mibee-eye-thermal
+    /// device number, so the NVR's archived entry semantics carry over).
+    #[serde(default = "default_gb_thermal_device_id")]
+    pub device_id: String,
+    /// Catalog channel ID under the thermal device.
+    #[serde(default = "default_gb_thermal_channel_id")]
+    pub channel_id: String,
+    /// Local SIP port — must differ from `[gb28181] local_sip_port`
+    /// (both instances register from the same IP).
+    #[serde(default = "default_gb_thermal_sip_port")]
+    pub local_sip_port: u16,
+    /// Overrides the inherited `[gb28181] password` when non-empty.
+    #[serde(default)]
+    pub password: String,
+    /// Stream profile (defaults = NVR-agreed 320×240@4 single stream).
+    #[serde(default = "default_gb_thermal_width")]
+    pub width: u32,
+    #[serde(default = "default_gb_thermal_height")]
+    pub height: u32,
+    #[serde(default = "default_gb_thermal_fps")]
+    pub fps: u32,
+    #[serde(default = "default_gb_thermal_bitrate")]
+    pub bitrate_bps: u32,
+    /// IDR interval in frames.
+    #[serde(default = "default_gb_thermal_i_period")]
+    pub i_period: u32,
+}
+
+fn default_gb_thermal_width() -> u32 {
+    320
+}
+fn default_gb_thermal_height() -> u32 {
+    240
+}
+fn default_gb_thermal_fps() -> u32 {
+    4
+}
+
+fn default_gb_thermal_device_id() -> String {
+    "34020000001320000003".to_string()
+}
+fn default_gb_thermal_channel_id() -> String {
+    "34020000001310000003".to_string()
+}
+fn default_gb_thermal_sip_port() -> u16 {
+    5061
+}
+fn default_gb_thermal_bitrate() -> u32 {
+    300_000
+}
+fn default_gb_thermal_i_period() -> u32 {
+    12
+}
+
+impl Default for Gb28181ThermalConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            device_id: default_gb_thermal_device_id(),
+            channel_id: default_gb_thermal_channel_id(),
+            local_sip_port: default_gb_thermal_sip_port(),
+            password: String::new(),
+            width: 320,
+            height: 240,
+            fps: 4,
+            bitrate_bps: default_gb_thermal_bitrate(),
+            i_period: default_gb_thermal_i_period(),
         }
     }
 }
@@ -791,6 +885,12 @@ pub struct Config {
     /// Thermal side sensor (SPEC §3.7): MLX90640 radiometric readings.
     #[serde(default)]
     pub thermal: ThermalConfig,
+    /// Thermal GB channel (rs#3 "plan A"): a second GB28181 device
+    /// instance streaming the rendered thermal view with
+    /// `PhotoelectricImagingType = 2`. Inert unless both this and
+    /// `[thermal] enabled` are on.
+    #[serde(default)]
+    pub gb28181_thermal: Gb28181ThermalConfig,
 }
 
 // ---------------------------------------------------------------------------
@@ -1150,6 +1250,7 @@ impl Default for Config {
             rtmp: RtmpConfig::default(),
             features: FeaturesConfig::default(),
             thermal: ThermalConfig::default(),
+            gb28181_thermal: Gb28181ThermalConfig::default(),
         }
     }
 }

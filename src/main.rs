@@ -546,11 +546,37 @@ async fn main() {
         });
     }
 
+    // Thermal side sensor (SPEC §3.7): started early — the GB thermal
+    // channel below and the web card both consume the same service. The
+    // hardware overlay (written by the web hardware card) overrides
+    // bus/address from discovery runs. Fail-open: a missing module keeps
+    // the subsystem in warmup — endpoints answer honestly with
+    // trusted:false instead of taking the camera down.
+    let thermal_svc: Option<std::sync::Arc<mibee_eye_raspi_rs::thermal::ThermalService>> =
+        if config.thermal.enabled {
+            let overlay =
+                std::path::Path::new(&config_path).with_file_name("thermal-hardware.toml");
+            let mut thermal_cfg = config.thermal.clone();
+            if let Some((bus, addr)) = mibee_eye_raspi_rs::thermal::load_overlay(&overlay) {
+                println!("thermal: hardware overlay applied ({})", overlay.display());
+                thermal_cfg.bus = bus;
+                thermal_cfg.addr = addr;
+            }
+            let svc = mibee_eye_raspi_rs::thermal::ThermalService::start(&thermal_cfg);
+            svc.set_persist_path(Some(overlay));
+            mibee_eye_raspi_rs::thermal::spawn_sse_pump(std::sync::Arc::clone(&svc));
+            Some(svc)
+        } else {
+            None
+        };
+
     // --- Start GB28181 server (if enabled) ---
     // Coordinates process exits (SIGTERM / web restart) with the GB
     // supervisor below: exit paths request, the supervisor deregisters
-    // (REGISTER Expires: 0) and only then acks.
+    // (REGISTER Expires: 0) and only then acks. A second handshake covers
+    // the thermal GB instance (same sequence, independent supervisor).
     let gb_exit = GracefulExit::new();
+    let gb_exit_thermal = GracefulExit::new();
     if config.gb28181.enabled {
         if let Some(gb_hub) = au_hub.clone() {
             let mut gb_config = config.gb28181.clone();
@@ -750,6 +776,152 @@ async fn main() {
         gb_exit.mark_done();
     }
 
+    // --- Thermal GB channel (rs#3 "plan A") ---
+    // A second GB28181 device instance streams the rendered thermal view
+    // (ironbow + temperature OSD → openh264 320×240): independent device
+    // ID + SIP port 5061, catalog PhotoelectricImagingType = 2, platform
+    // coordinates inherited from [gb28181]. The encoder freezes on the
+    // last grid when the sensor drops; a missing sensor ([thermal] off)
+    // or software-encoder-less build keeps the channel honestly off.
+    #[cfg(feature = "software-encoder")]
+    if config.gb28181_thermal.enabled {
+        if let Some(svc) = thermal_svc.clone() {
+            let lib_cfg = mibee_eye_raspi_rs::thermal::gb_stream::thermal_lib_config(
+                &config.gb28181,
+                &config.gb28181_thermal,
+                &config.device.name,
+            );
+            let params = mibee_eye_raspi_rs::thermal::gb_stream::GbStreamParams {
+                width: config.gb28181_thermal.width,
+                height: config.gb28181_thermal.height,
+                fps: config.gb28181_thermal.fps,
+                bitrate_bps: config.gb28181_thermal.bitrate_bps,
+                i_period: config.gb28181_thermal.i_period,
+            };
+            let thermal_hub = Arc::new(mibee_eye_raspi_rs::h264::hub::AuHub::new());
+            let thermal_idr = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            mibee_eye_raspi_rs::thermal::gb_stream::spawn_encoder(
+                svc.clone(),
+                params,
+                Arc::clone(&thermal_hub),
+                Arc::clone(&thermal_idr),
+            );
+            // Temperature over-limit alarm (M4): the task holds a
+            // notifier slot the supervisor below refreshes on every
+            // server rebuild (same pattern as the main instance's
+            // AlarmBridge).
+            let alarm_cfg = config.thermal.alarm.clone();
+            let thermal_notifier: mibee_eye_raspi_rs::thermal::alarm::NotifierSlot =
+                Arc::new(std::sync::RwLock::new(None));
+            if alarm_cfg.enabled {
+                mibee_eye_raspi_rs::thermal::alarm::spawn_alarm_task(
+                    svc,
+                    alarm_cfg,
+                    Arc::clone(&thermal_notifier),
+                );
+            }
+            println!(
+                "gb28181-thermal: starting {} on port {} ({}x{}@{}, PhotoelectricImagingType=2)",
+                lib_cfg.device_id,
+                lib_cfg.local_sip_port,
+                config.gb28181_thermal.width,
+                config.gb28181_thermal.height,
+                config.gb28181_thermal.fps,
+            );
+            let gb_exit_sup = gb_exit_thermal.clone();
+            // `observe` moved into the main GB supervisor above; the web
+            // handle (same Observe) is cloned here before the web server
+            // consumes it below.
+            let observe_t = web_observe.clone();
+            tokio::spawn(async move {
+                let mut want_rx = gb_exit_sup.want.subscribe();
+                loop {
+                    // Same boot-race resilience as the main instance; one
+                    // span per supervision cycle.
+                    let server = retry_start(
+                        || async {
+                            let built = Gb28181Server::with_recording_index(
+                                lib_cfg.clone(),
+                                Arc::new(AuHubFrameSource(
+                                    Arc::clone(&thermal_hub),
+                                    observe_t.clone(),
+                                )),
+                                None,
+                            )
+                            .with_control_handler(Some(Arc::new(ThermalControlGlue {
+                                idr_flag: Arc::clone(&thermal_idr),
+                            })));
+                            // Live notifier → the M4 temperature alarm task.
+                            *thermal_notifier.write().expect("thermal notifier lock") =
+                                Some(built.notifier());
+                            match built.spawn().await {
+                                Ok(handle) => Some(handle),
+                                Err(e) => {
+                                    eprintln!("gb28181-thermal: {e} — retrying");
+                                    None
+                                }
+                            }
+                        },
+                        Duration::from_secs(1),
+                        Duration::from_secs(30),
+                    )
+                    .instrument(tracing::info_span!(
+                        "gb28181_register",
+                        otel.name = "gb28181_register_thermal",
+                    ))
+                    .await;
+                    if *want_rx.borrow() {
+                        // Exit requested while retrying — nothing to
+                        // deregister (the server never came up).
+                        let _ = gb_exit_sup.done.send(true);
+                        break;
+                    }
+                    let mut server = Box::pin(server);
+                    loop {
+                        tokio::select! {
+                            _ = &mut server => {
+                                eprintln!("gb28181-thermal: server stopped — restarting");
+                                break;
+                            }
+                            _ = want_rx.changed() => {
+                                if !*want_rx.borrow() { continue; }
+                                match tokio::time::timeout(
+                                    Duration::from_secs(8),
+                                    server.as_mut().shutdown_with_deregister(),
+                                ).await {
+                                    Ok(Ok(())) => println!("gb28181-thermal: deregistered before exit"),
+                                    Ok(Err(e)) => eprintln!("gb28181-thermal: deregister error — {e}"),
+                                    Err(_) => {
+                                        eprintln!("gb28181-thermal: deregister timed out; aborting server task");
+                                        server.as_mut().abort();
+                                    }
+                                }
+                                let _ = gb_exit_sup.done.send(true);
+                                break;
+                            }
+                        }
+                    }
+                }
+            });
+        } else {
+            eprintln!(
+                "gb28181-thermal: enabled but [thermal] enabled = false — no thermal source, channel off"
+            );
+            gb_exit_thermal.mark_done();
+        }
+    } else {
+        gb_exit_thermal.mark_done();
+    }
+    #[cfg(not(feature = "software-encoder"))]
+    {
+        if config.gb28181_thermal.enabled {
+            eprintln!(
+                "gb28181-thermal: enabled but this build lacks the software encoder (openh264) — channel unavailable"
+            );
+        }
+        gb_exit_thermal.mark_done();
+    }
+
     // --- Start local recording (if enabled) ---
     if config.recording.enabled {
         if let Some(rec_hub) = au_hub.clone() {
@@ -827,16 +999,17 @@ async fn main() {
     // config applied. Spawned (not inline) so the HTTP handler returns and
     // the response flushes before the process dies.
     let gb_exit_restart = gb_exit.clone();
+    let gb_exit_thermal_restart = gb_exit_thermal.clone();
     web = web.with_restart_action(std::sync::Arc::new(move || {
-        let exit = gb_exit_restart.clone();
+        let exits = vec![gb_exit_restart.clone(), gb_exit_thermal_restart.clone()];
         tokio::spawn(async move {
-            graceful_exit(exit).await;
+            graceful_exit(exits).await;
         });
     }));
     // SIGTERM (systemd stop/restart) gets the same sequence: request the
-    // GB supervisor to deregister, then exit once it acks (10s ceiling).
+    // GB supervisors to deregister, then exit once they ack (10s ceiling).
     {
-        let exit = gb_exit.clone();
+        let exits = vec![gb_exit.clone(), gb_exit_thermal.clone()];
         tokio::spawn(async move {
             use tokio::signal::unix::{signal, SignalKind};
             let mut term = signal(SignalKind::terminate()).expect("install SIGTERM handler");
@@ -846,30 +1019,15 @@ async fn main() {
                 _ = int.recv() => println!("shutdown: SIGINT received"),
                 _ = tokio::signal::ctrl_c() => println!("shutdown: ctrl_c received"),
             }
-            graceful_exit(exit).await;
+            graceful_exit(exits).await;
         });
     }
     if let Some(bus) = ai_event_bus {
         web = web.with_event_bus(bus);
     }
 
-    // Thermal side sensor (SPEC §3.7): MLX90640 radiometric readings for
-    // dual-spectrum devices. The hardware overlay (written by the web
-    // hardware card) overrides bus/address from discovery runs. Fail-open:
-    // a missing module keeps the subsystem in warmup — endpoints answer
-    // honestly with trusted:false instead of taking the camera down.
-    if config.thermal.enabled {
-        let overlay = std::path::Path::new(&config_path).with_file_name("thermal-hardware.toml");
-        let mut thermal_cfg = config.thermal.clone();
-        if let Some((bus, addr)) = mibee_eye_raspi_rs::thermal::load_overlay(&overlay) {
-            println!("thermal: hardware overlay applied ({})", overlay.display());
-            thermal_cfg.bus = bus;
-            thermal_cfg.addr = addr;
-        }
-        let svc = mibee_eye_raspi_rs::thermal::ThermalService::start(&thermal_cfg);
-        svc.set_persist_path(Some(overlay));
-        mibee_eye_raspi_rs::thermal::spawn_sse_pump(std::sync::Arc::clone(&svc));
-        web = web.with_thermal(svc);
+    if let Some(svc) = &thermal_svc {
+        web = web.with_thermal(svc.clone());
     }
     println!("web: listening on :{}", config.web.port);
     if let Err(e) = web.start(config, config_path.clone()).await {
@@ -935,15 +1093,19 @@ impl GracefulExit {
     }
 }
 
-/// Exit sequence shared by SIGTERM and the web restart action: request the
-/// GB supervisor to deregister, wait for its ack (bounded), exit.
-async fn graceful_exit(exit: GracefulExit) {
-    exit.request();
-    if tokio::time::timeout(Duration::from_secs(10), exit.wait_done())
-        .await
-        .is_err()
-    {
-        eprintln!("shutdown: GB deregister did not finish in time — exiting anyway");
+/// Exit sequence shared by SIGTERM and the web restart action: request
+/// every GB supervisor (main + thermal instances) to deregister, wait
+/// for their acks (bounded — 10s total ceiling across the group), exit.
+async fn graceful_exit(exits: Vec<GracefulExit>) {
+    for exit in &exits {
+        exit.request();
+    }
+    // Sequential bounded waits: N supervisors share the 10s ceiling.
+    let per = Duration::from_secs(if exits.len() > 1 { 5 } else { 10 });
+    for exit in exits {
+        if tokio::time::timeout(per, exit.wait_done()).await.is_err() {
+            eprintln!("shutdown: a GB deregister did not finish in time — continuing");
+        }
     }
     println!("shutdown: exiting");
     std::process::exit(0);
@@ -1007,6 +1169,24 @@ struct ControlGlue {
     idr_flag: Arc<std::sync::atomic::AtomicBool>,
     rec_pause: Arc<std::sync::atomic::AtomicBool>,
     recording_enabled: bool,
+}
+
+/// DeviceControl glue for the thermal GB instance: IFrameCmd forces the
+/// thermal encoder's next frame to IDR; RecordCmd has no recorder to
+/// gate on that instance (the thermal channel has no recording), so it
+/// logs instead of silently pretending.
+struct ThermalControlGlue {
+    idr_flag: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl mibee_eye_raspi_rs::gb28181::server::DeviceControlHandler for ThermalControlGlue {
+    fn on_force_iframe(&self) {
+        mibee_eye_raspi_rs::camera::raise_idr_request(&self.idr_flag);
+    }
+
+    fn on_record(&self, _start: bool) {
+        eprintln!("gb28181-thermal: RecordCmd ignored — the thermal channel has no recording");
+    }
 }
 
 impl mibee_eye_raspi_rs::gb28181::server::DeviceControlHandler for ControlGlue {
