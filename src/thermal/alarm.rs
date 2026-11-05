@@ -148,19 +148,35 @@ pub fn spawn_alarm_task(svc: Arc<ThermalService>, cfg: TempAlarmConfig, notifier
                     "thermal-alarm: over-limit fired (max {fired_at:.1}°C ≥ {}°C) — NOTIFY priority {}",
                     cfg.threshold_c, cfg.priority
                 );
-                if let Some(n) = notifier.read().expect("thermal notifier lock").clone() {
-                    let desc = format!(
-                        "Temperature over-limit: max {fired_at:.1}°C ≥ {:.1}°C (MLX90640)",
-                        cfg.threshold_c
+                let Some(n) = notifier.read().expect("thermal notifier lock").clone() else {
+                    eprintln!(
+                        "thermal-alarm: no notifier (thermal GB instance not up) — NOTIFY not sent"
                     );
-                    // AlarmMethod=2 设备报警 / AlarmType=4 高温报警 (2022
-                    // A.2.5.5 code table); time = fire instant.
-                    n.send_alarm(
-                        &cfg.priority.to_string(),
-                        "2",
-                        &crate::gb28181::client::format_gb_time_ms(now_ms()),
-                        "4",
-                        &desc,
+                    continue;
+                };
+                let desc = format!(
+                    "Temperature over-limit: max {fired_at:.1}°C ≥ {:.1}°C (MLX90640)",
+                    cfg.threshold_c
+                );
+                // AlarmMethod=2 设备报警 / AlarmType=4 高温报警 (2022
+                // A.2.5.5 code table); time = fire instant. The send
+                // result distinguishes "went out on the wire" (platform
+                // holds an Alarm subscription) from a silent no-op.
+                let sent = n.send_alarm(
+                    &cfg.priority.to_string(),
+                    "2",
+                    &crate::gb28181::client::format_gb_time_ms(now_ms()),
+                    "4",
+                    &desc,
+                );
+                if sent {
+                    println!(
+                        "thermal-alarm: NOTIFY sent (Method=2 Type=4 priority {})",
+                        cfg.priority
+                    );
+                } else {
+                    eprintln!(
+                        "thermal-alarm: NOTIFY NOT sent — no live Alarm subscription on the thermal instance"
                     );
                 }
             }
