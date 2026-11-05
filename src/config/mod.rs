@@ -490,6 +490,11 @@ pub struct WebConfig {
     pub username: String,
     #[serde(default)]
     pub password: String,
+    /// Static bearer token for machine consumers (`Authorization: Bearer
+    /// <token>`; SPEC §3.7 thermal consumers like the NVR adapter). Empty
+    /// (default) = off; a session cookie OR this header passes the gate.
+    #[serde(default)]
+    pub api_token: String,
     #[serde(default = "default_tls_enabled")]
     pub tls_enabled: bool,
 }
@@ -848,6 +853,7 @@ impl Default for WebConfig {
             username: String::new(),
             password: String::new(),
             tls_enabled: default_tls_enabled(),
+            api_token: String::new(),
         }
     }
 }
