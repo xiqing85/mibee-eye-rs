@@ -490,6 +490,11 @@ pub struct WebConfig {
     pub username: String,
     #[serde(default)]
     pub password: String,
+    /// Static bearer token for machine consumers (`Authorization: Bearer
+    /// <token>`; SPEC §3.7 thermal consumers like the NVR adapter). Empty
+    /// (default) = off; a session cookie OR this header passes the gate.
+    #[serde(default)]
+    pub api_token: String,
     #[serde(default = "default_tls_enabled")]
     pub tls_enabled: bool,
 }
@@ -549,6 +554,59 @@ pub struct RecordingConfig {
     pub retention_days: u32,
     #[serde(default = "default_recording_max_storage_mb")]
     pub max_storage_mb: u64,
+}
+
+/// Thermal side-sensor bus spec (SPEC §3.7 hardware dialect). `auto` =
+/// boot-time discovery: hardware TWI first, bit-bang fallback.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum BusSpec {
+    /// Hardware TWI bus device (`bus = { type = "twi", device = "/dev/i2c-1" }`).
+    Twi {
+        device: String,
+    },
+    Gpio {
+        sda: u32,
+        scl: u32,
+    },
+    Auto,
+}
+
+/// MLX90640 radiometric side sensor (SPEC §3.7): dual-spectrum readings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThermalConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_thermal_bus")]
+    pub bus: BusSpec,
+    /// MLX90640 7-bit address (factory 0x33; A1/A0 straps move it in
+    /// 0x30..=0x3E — the hardware card's scan finds the live one).
+    #[serde(default = "default_thermal_addr")]
+    pub addr: u8,
+    /// Emissivity for the To chain (user calibration, 0 < ε ≤ 1).
+    #[serde(default = "default_thermal_emissivity")]
+    pub emissivity: f64,
+}
+
+fn default_thermal_bus() -> BusSpec {
+    BusSpec::Auto
+}
+fn default_thermal_addr() -> u8 {
+    0x33
+}
+fn default_thermal_emissivity() -> f64 {
+    1.0
+}
+
+impl Default for ThermalConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            bus: default_thermal_bus(),
+            addr: default_thermal_addr(),
+            emissivity: default_thermal_emissivity(),
+        }
+    }
 }
 
 impl Default for RecordingConfig {
@@ -730,6 +788,9 @@ pub struct Config {
     pub rtmp: RtmpConfig,
     #[serde(default)]
     pub features: FeaturesConfig,
+    /// Thermal side sensor (SPEC §3.7): MLX90640 radiometric readings.
+    #[serde(default)]
+    pub thermal: ThermalConfig,
 }
 
 // ---------------------------------------------------------------------------
@@ -792,6 +853,7 @@ impl Default for WebConfig {
             username: String::new(),
             password: String::new(),
             tls_enabled: default_tls_enabled(),
+            api_token: String::new(),
         }
     }
 }
@@ -1087,6 +1149,7 @@ impl Default for Config {
             motion: MotionConfig::default(),
             rtmp: RtmpConfig::default(),
             features: FeaturesConfig::default(),
+            thermal: ThermalConfig::default(),
         }
     }
 }

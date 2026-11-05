@@ -47,6 +47,7 @@ pub struct WebServer {
     /// Observability state (SPEC §3.2). Created eagerly so the process-wide
     /// logger can tee into it before the web server starts.
     observe: Arc<super::observe::Observe>,
+    thermal: Option<std::sync::Arc<crate::thermal::ThermalService>>,
 }
 
 impl WebServer {
@@ -66,6 +67,7 @@ impl WebServer {
             registry: None,
             restart_action: None,
             event_bus: None,
+            thermal: None,
             observe: Arc::new(super::observe::Observe::new()),
         }
     }
@@ -144,6 +146,13 @@ impl WebServer {
         self
     }
 
+    /// Set the running thermal subsystem (SPEC §3.7): enables the thermal
+    /// endpoints + capability. Absent keeps them 404/negative-compat.
+    pub fn with_thermal(mut self, svc: std::sync::Arc<crate::thermal::ThermalService>) -> Self {
+        self.thermal = Some(svc);
+        self
+    }
+
     /// Build the axum [`Router`] with all route definitions (SPEC v1).
     ///
     /// Exposed as public so tests can exercise routing without binding.
@@ -179,6 +188,26 @@ impl WebServer {
             .route("/api/config", get(api::get_config).put(api::put_config))
             .route("/api/reset", post(api::reset_config))
             .route("/api/events", get(super::events::events_handler))
+            // Thermal extension (SPEC §3.7) — every handler 404s when the
+            // subsystem isn't running.
+            .route(
+                "/api/thermal/current",
+                get(super::thermal_api::thermal_current),
+            )
+            .route(
+                "/api/thermal/snapshot",
+                get(super::thermal_api::thermal_snapshot),
+            )
+            .route("/api/hardware", get(super::thermal_api::hardware_get))
+            .route(
+                "/api/hardware/scan",
+                get(super::thermal_api::hardware_scan_get)
+                    .post(super::thermal_api::hardware_scan_post),
+            )
+            .route(
+                "/api/hardware/config",
+                axum::routing::put(super::thermal_api::hardware_config_put),
+            )
             // Extensions (SPEC §4.6–4.7)
             .route("/api/ptz/status", get(api::ptz_status))
             .route("/api/ptz/move", post(api::ptz_move))
@@ -262,6 +291,7 @@ impl WebServer {
             )),
             started: std::time::Instant::now(),
             observe: self.observe.clone(),
+            thermal: self.thermal.clone(),
         });
         super::auth::spawn_sweeper(state.sessions.clone());
         // Resource sampler for the metrics summary + Prometheus gauges.
@@ -827,6 +857,48 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_bearer_token_passes_api_gate() {
+        // SPEC §3.7 machine consumers: with web.api_token configured, a
+        // matching Authorization header passes the gate (no session); a
+        // wrong token stays 401.
+        let cfg = WebConfig {
+            api_token: "test-bearer-1".to_string(),
+            ..Default::default()
+        };
+        let state = default_state();
+        *state.config.write().await = crate::config::Config {
+            web: cfg,
+            ..Default::default()
+        };
+        let app = WebServer::new(&WebConfig::default()).route(state);
+
+        let ok = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/status")
+                    .header("Authorization", "Bearer test-bearer-1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(ok.status(), StatusCode::OK);
+
+        let bad = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/status")
+                    .header("Authorization", "Bearer wrong")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(bad.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
