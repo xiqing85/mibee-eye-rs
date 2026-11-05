@@ -389,6 +389,22 @@ pub async fn auth_gate(
         return next.run(req).await;
     }
 
+    // SPEC §3.7 machine consumers: a static bearer token (when configured)
+    // passes the gate without a session — reads and writes alike (no CSRF
+    // double-submit for header-authenticated clients).
+    let cfg_token = state.config.read().await.web.api_token.clone();
+    if let Some(cfg_token) = (!cfg_token.is_empty()).then_some(cfg_token) {
+        if req
+            .headers()
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v == format!("Bearer {cfg_token}"))
+            .unwrap_or(false)
+        {
+            return next.run(req).await;
+        }
+    }
+
     let Some(token) = session_cookie(&req) else {
         return err_env(StatusCode::UNAUTHORIZED, "not signed in").into_response();
     };

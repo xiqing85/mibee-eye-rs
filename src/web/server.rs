@@ -860,6 +860,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_bearer_token_passes_api_gate() {
+        // SPEC §3.7 machine consumers: with web.api_token configured, a
+        // matching Authorization header passes the gate (no session); a
+        // wrong token stays 401.
+        let cfg = WebConfig {
+            api_token: "test-bearer-1".to_string(),
+            ..Default::default()
+        };
+        let state = default_state();
+        *state.config.write().await = crate::config::Config {
+            web: cfg,
+            ..Default::default()
+        };
+        let app = WebServer::new(&WebConfig::default()).route(state);
+
+        let ok = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/status")
+                    .header("Authorization", "Bearer test-bearer-1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(ok.status(), StatusCode::OK);
+
+        let bad = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/status")
+                    .header("Authorization", "Bearer wrong")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(bad.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
     async fn test_not_found_falls_to_spa() {
         let server = WebServer::new(&WebConfig::default());
         let app = server.route(default_state());
