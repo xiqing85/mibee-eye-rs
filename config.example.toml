@@ -455,7 +455,9 @@ enabled = false  # 未实现 (Not implemented) — see docs/features/h265.md
 # ─────────────────────────────────────────────────────────────────────
 # Thermal side sensor (SPEC §3.7) — MLX90640 32x24 radiometric module.
 # Dual-spectrum readings: webui thermal card + /api/thermal/* + SSE
-# thermal.temperature. The GB28181/RTSP channels stay the visible camera.
+# thermal.temperature. The main GB28181/RTSP channels stay the visible
+# camera; the optional [gb28181_thermal] section below adds the thermal
+# view as a second GB device instance.
 # ─────────────────────────────────────────────────────────────────────
 [thermal]
 enabled = false
@@ -468,3 +470,51 @@ bus = { type = "auto" }
 addr = 0x33
 # Emissivity of the measured surface (0 < ε ≤ 1; default 1.0).
 #emissivity = 1.0
+# Module-mount orientation (applied once per frame — every consumer sees
+# the corrected orientation). The .104 fixture needed hflip = true.
+#hflip = false
+#vflip = false
+
+# ─────────────────────────────────────────────────────────────────────
+# Thermal GB channel (dual-spectrum "plan A") — a second GB28181 device
+# instance streaming the rendered thermal view (ironbow + temperature
+# OSD → openh264) with catalog PhotoelectricImagingType = 2, so the
+# platform treats it as the thermal lens of the dual-spectrum pair.
+# Needs [thermal] enabled; platform address/port, SIP domain and the SIP
+# password inherit from [gb28181].
+# ─────────────────────────────────────────────────────────────────────
+[gb28181_thermal]
+enabled = false
+# Second device identity (defaults reuse the retired mibee-eye-thermal
+# device number so archived platform entries keep their meaning).
+#device_id = "34020000001320000003"
+#channel_id = "34020000001310000003"
+# Local SIP port — must differ from [gb28181] local_sip_port.
+#local_sip_port = 5061
+# Overrides the inherited [gb28181] password when non-empty.
+#password = ""
+# Stream profile (NVR-agreed 320×240@2-8 fps single stream).
+#width = 320
+#height = 240
+#fps = 4
+#bitrate_bps = 300000
+#i_period = 12
+
+# ─────────────────────────────────────────────────────────────────────
+# [thermal.alarm] — temperature over-limit alarm (rs#3 M4). On a
+# sustained over-limit edge the thermal GB instance sends a GB/T 28181
+# alarm NOTIFY: AlarmMethod=2 (设备报警) + AlarmType=4 (高温报警,
+# 2022 A.2.5.5) + the priority below. Needs [gb28181_thermal] enabled.
+# ─────────────────────────────────────────────────────────────────────
+#[thermal.alarm]
+#enabled = false
+# Over-limit threshold on the reading max (°C).
+#threshold_c = 60.0
+# Re-arm hysteresis: clears only below threshold - hysteresis.
+#hysteresis_c = 3.0
+# Sustained-above seconds before firing (anti-blip).
+#sustain_secs = 5
+# Minimum spacing between fired alarms.
+#cooldown_secs = 60
+# GB AlarmPriority 1..=4 (1 = 一级警情/火警级).
+#priority = 1
