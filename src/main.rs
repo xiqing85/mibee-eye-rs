@@ -380,6 +380,10 @@ async fn main() {
         rtsp_port: config.rtsp.port,
         device_ip: device_ip.clone(),
         stream_path: "/stream".to_string(),
+        // GetMetadataUri → the RTSP metadata mount point; the product
+        // serves no RTP/XML metadata stream, so advertise the default path
+        // (harness-facing seam, onvif-go #162 twin).
+        metadata_path: "/metadata".to_string(),
         // GetSnapshotUri → the legacy public JPEG endpoint (SPEC appendix A).
         snapshot_port: config.web.port,
         snapshot_path: "/snapshot".to_string(),

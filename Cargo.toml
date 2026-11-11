@@ -50,11 +50,11 @@ env_logger = "0.11"
 # transport-parity package: pagination, tcp-out/tls/tls-listen with
 # redial, subscriptions and async exchanges over streams, passive TCP
 # media, multi-channel catalog, the InfoQueryProvider seam, multicast.
-gb28181-rs = "0.14.1"
+gb28181-rs = "0.15.0"
 # ONVIF Device stack (extracted library). 0.9.0 adds the client half
 # (auth ladder, ten domains, discovery, push subscriptions, analytics,
 # HTTP Digest) — the product uses the server half, unchanged.
-onvif-device-rs = "0.12.1"
+onvif-device-rs = "0.13.0"
 anyhow = "1"
 # AI inference (ONNX Runtime) — optional, behind `ai` feature
 # load-dynamic: no C++ linking at compile time; libonnxruntime.so loaded at runtime via ORT_DYLIB_PATH
